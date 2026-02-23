@@ -87,6 +87,15 @@ void ChonkyLauncher::setupUI()
 	m_gamesPathLayout->addWidget(m_gamesBrowseButton);
 	m_gamesPathLayout->addWidget(m_scanButton);
 
+	m_gameControlsLayout = new QHBoxLayout();
+	m_playButton = new QPushButton("▶ Play");
+	m_playButton->setEnabled(false);
+	m_stopButton = new QPushButton("⏹ Stop");
+	m_stopButton->setEnabled(false);
+
+	m_gameControlsLayout->addWidget(m_playButton);
+	m_gameControlsLayout->addWidget(m_stopButton);
+
 	m_gamesListLabel = new QLabel("Available Games:");
 	m_gamesList = new QListWidget();
 	m_gamesList->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -96,15 +105,6 @@ void ChonkyLauncher::setupUI()
 	m_gamesList->setMovement(QListWidget::Static);
 	m_gamesList->setSpacing(5);
 	m_gamesList->setWordWrap(true);
-
-	m_gameControlsLayout = new QHBoxLayout();
-	m_playButton = new QPushButton("▶ Play");
-	m_playButton->setEnabled(false);
-	m_stopButton = new QPushButton("⏹ Stop");
-	m_stopButton->setEnabled(false);
-
-	m_gameControlsLayout->addWidget(m_playButton);
-	m_gameControlsLayout->addWidget(m_stopButton);
 
 	m_iconSizeLayout = new QHBoxLayout();
 	m_iconSizeLabel = new QLabel("Icon Size:");
@@ -136,9 +136,9 @@ void ChonkyLauncher::setupUI()
 
 	m_mainLayout->addLayout(m_chonkyPathLayout);
 	m_mainLayout->addLayout(m_gamesPathLayout);
+	m_mainLayout->addLayout(m_gameControlsLayout);
 	m_mainLayout->addWidget(m_gamesListLabel);
 	m_mainLayout->addWidget(m_gamesList);
-	m_mainLayout->addLayout(m_gameControlsLayout);
 	m_mainLayout->addLayout(m_iconSizeLayout);
 	m_mainLayout->addLayout(m_updateLayout);
 	m_mainLayout->addWidget(m_progressBar);
