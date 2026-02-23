@@ -37,7 +37,7 @@ class ChonkyLauncher : public QMainWindow
 public:
 	ChonkyLauncher(QWidget* parent = nullptr);
 	~ChonkyLauncher();
-	  
+
 private slots:
 	void selectChonkyExecutable();
 	void selectGamesFolder();

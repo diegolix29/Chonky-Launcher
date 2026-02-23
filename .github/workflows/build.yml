@@ -18,12 +18,64 @@ env:
   BUILD_TYPE: Release
 
 jobs:
+  get-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      current-version: ${{ steps.version.outputs.current-version }}
+      new-version: ${{ steps.version.outputs.new-version }}
+      version-major: ${{ steps.version.outputs.version-major }}
+      version-minor: ${{ steps.version.outputs.version-minor }}
+      version-patch: ${{ steps.version.outputs.version-patch }}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Get and increment version
+      id: version
+      run: |
+        # Extract current version from main.cpp
+        CURRENT_VERSION=$(grep 'setApplicationVersion' main.cpp | sed 's/.*"\(.*\)".*/\1/')
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Parse version components
+        IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+        MAJOR=${VERSION_PARTS[0]}
+        MINOR=${VERSION_PARTS[1]}
+        PATCH=${VERSION_PARTS[2]}
+        
+        # Increment patch number
+        NEW_PATCH=$((PATCH + 1))
+        NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+        
+        echo "version-major=$MAJOR" >> $GITHUB_OUTPUT
+        echo "version-minor=$MINOR" >> $GITHUB_OUTPUT
+        echo "version-patch=$NEW_PATCH" >> $GITHUB_OUTPUT
+        echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        
+        echo "New version will be: $NEW_VERSION"
+        
+    - name: Update version in source
+      run: |
+        # Update version in main.cpp
+        sed -i 's/setApplicationVersion("[^"]*")/setApplicationVersion("${{ steps.version.outputs.new-version }}")/' main.cpp
+        
+        # Update version in chonkylauncher.cpp
+        sed -i 's/m_currentVersion("[^"]*")/m_currentVersion("${{ steps.version.outputs.new-version }}")/' chonkylauncher.cpp
+        
+        # Commit version change
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add main.cpp chonkylauncher.cpp
+        git commit -m "Bump version to ${{ steps.version.outputs.new-version }}"
+        git push
+
   get-info:
     runs-on: ubuntu-24.04
+    needs: get-version
     outputs:
       date: ${{ steps.vars.outputs.date }}
       shorthash: ${{ steps.vars.outputs.shorthash }}
       fullhash: ${{ steps.vars.outputs.fullhash }}
+      version: ${{ needs.get-version.outputs.new-version }}
     steps:
     - uses: actions/checkout@v5
     - name: Get date and git hash
@@ -35,10 +87,11 @@ jobs:
         echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
         echo "shorthash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
         echo "fullhash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+        echo "version=${{ needs.get-version.outputs.new-version }}" >> $GITHUB_OUTPUT
 
   windows:
     runs-on: windows-2025
-    needs: get-info
+    needs: [get-version, get-info]
     steps:
     - uses: actions/checkout@v5
 
@@ -99,7 +152,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [get-info, windows]
+    needs: [get-version, get-info, windows]
     runs-on: ubuntu-latest
     steps:
     - name: Download artifact
@@ -113,7 +166,9 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        name: "ChonkyLauncher-${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}"
-        tag: "v${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}"
-        body: "ChonkyStation GUI Launcher Release\n\nCommit: ${{ needs.get-info.outputs.fullhash }}\n\n**Download:** `ChonkyLauncher-Windows.zip`"
+        name: "ChonkyLauncher ${{ needs.get-version.outputs.new-version }}"
+        tag: "v${{ needs.get-version.outputs.new-version }}"
+        body: "ChonkyStation GUI Launcher Release ${{ needs.get-version.outputs.new-version }}\n\nCommit: ${{ needs.get-info.outputs.fullhash }}\n\n**Changes:**\n- Version bumped from ${{ needs.get-version.outputs.current-version }} to ${{ needs.get-version.outputs.new-version }}\n\n**Download:** `ChonkyLauncher-Windows.zip`"
         artifacts: ChonkyLauncher-Windows.zip
+        prerelease: false
+        draft: false
