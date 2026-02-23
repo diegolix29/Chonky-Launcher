@@ -40,6 +40,8 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_networkManager(nullptr)
 	, m_currentReply(nullptr)
 	, m_currentVersion(QApplication::applicationVersion())
+	, m_latestVersion("")
+	, m_lastInstalledReleaseId("")
 	, m_tempDir(nullptr)
 	, m_progressBar(nullptr)
 	, m_statusLabel(nullptr)
@@ -48,6 +50,19 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 {
 	m_settings = new QSettings("ChonkyLauncher", "Settings", this);
 	m_networkManager = new QNetworkAccessManager(this);
+	
+	// Load the actual installed version from settings, fallback to hardcoded version
+	QString installedVersion = m_settings->value("lastInstalledReleaseId", "").toString();
+	if (!installedVersion.isEmpty()) {
+		// Remove 'v' prefix if present
+		if (installedVersion.startsWith("v")) {
+			installedVersion = installedVersion.mid(1);
+		}
+		m_currentVersion = installedVersion;
+	} else {
+		m_currentVersion = QApplication::applicationVersion();
+	}
+	
 	setupUI();
 	loadSettings();
 
@@ -670,6 +685,7 @@ void ChonkyLauncher::onDownloadFinished()
 
 void ChonkyLauncher::extractAndInstall(const QString& zipPath)
 {
+	// Save the current latest version as the last installed version
 	m_lastInstalledReleaseId = m_latestVersion;
 	saveSettings();
 
@@ -816,11 +832,18 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 		latestVersion = latestVersion.mid(1);
 	}
 	
-	if (lastInstalledReleaseId.isEmpty()) {
-		return isNewerVersion(latestVersion, currentVersion);
+	// If we have a last installed release ID, compare with that
+	if (!lastInstalledReleaseId.isEmpty()) {
+		// Convert lastInstalledReleaseId to version format for comparison
+		QString lastInstalledVersion = lastInstalledReleaseId;
+		if (lastInstalledVersion.startsWith("v")) {
+			lastInstalledVersion = lastInstalledVersion.mid(1);
+		}
+		return isNewerVersion(latestVersion, lastInstalledVersion);
 	}
 	
-	return isNewerVersion(latestVersion, lastInstalledReleaseId);
+	// Fallback to comparing with current version
+	return isNewerVersion(latestVersion, currentVersion);
 }
 
 void ChonkyLauncher::loadThemes()
