@@ -155,11 +155,37 @@ jobs:
     needs: [get-version, get-info, windows]
     runs-on: ubuntu-latest
     steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+        
     - name: Download artifact
       uses: actions/download-artifact@v5
       with:
         name: ChonkyLauncher-Windows
         path: ./
+
+    - name: Get commit changes
+      id: changes
+      run: |
+        # Get the previous release tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        
+        if [ -n "$PREV_TAG" ]; then
+          echo "Previous tag: $PREV_TAG"
+          # Get commits since last release
+          COMMITS=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD)
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        else
+          echo "No previous release found"
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "- Initial release setup" >> $GITHUB_OUTPUT
+          echo "- Auto-versioning system implemented" >> $GITHUB_OUTPUT
+          echo "- Enhanced auto-updater with release ID tracking" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        fi
 
     - name: Create release
       uses: ncipollo/release-action@v1
@@ -168,7 +194,19 @@ jobs:
       with:
         name: "ChonkyLauncher ${{ needs.get-version.outputs.new-version }}"
         tag: "v${{ needs.get-version.outputs.new-version }}"
-        body: "ChonkyStation GUI Launcher Release ${{ needs.get-version.outputs.new-version }}\n\nCommit: ${{ needs.get-info.outputs.fullhash }}\n\n**Changes:**\n- Version bumped from ${{ needs.get-version.outputs.current-version }} to ${{ needs.get-version.outputs.new-version }}\n\n**Download:** `ChonkyLauncher-Windows.zip`"
+        body: |
+          ## ChonkyStation GUI Launcher Release ${{ needs.get-version.outputs.new-version }}
+          
+          **Commit:** ${{ needs.get-info.outputs.fullhash }}
+          
+          ### 📋 Changes since last release:
+          ${{ steps.changes.outputs.commits }}
+          
+          ### 📥 Download:
+          `ChonkyLauncher-Windows.zip`
+          
+          ---
+          **Version bumped from ${{ needs.get-version.outputs.current-version }} to ${{ needs.get-version.outputs.new-version }}**
         artifacts: ChonkyLauncher-Windows.zip
         prerelease: false
         draft: false
