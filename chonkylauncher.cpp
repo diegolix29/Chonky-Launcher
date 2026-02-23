@@ -2,6 +2,8 @@
 #include <QtWidgets/QApplication>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QThread>
+#include <QtCore/QDir>
+#include <QtCore/QTextStream>
 
 ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	: QMainWindow(parent)
@@ -653,14 +655,47 @@ void ChonkyLauncher::extractAndInstall(const QString& zipPath)
 	m_lastInstalledReleaseId = m_latestVersion;
 	saveSettings();
 
-	if (m_autoInstallCheckBox && m_autoInstallCheckBox->isChecked()) {
-		m_statusLabel->setText("Update installed automatically - restart required");
+#ifdef Q_OS_WIN
+	QString appPath = QCoreApplication::applicationDirPath();
+	QString tempDirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Temp";
+	QDir().mkpath(tempDirPath);
+	
+	if (createUpdateScript(zipPath, appPath)) {
+		QString scriptPath = tempDirPath + "/update.ps1";
+		
+		if (m_autoInstallCheckBox && m_autoInstallCheckBox->isChecked()) {
+			m_statusLabel->setText("Update downloaded - restarting for installation...");
+			
+			QProcess::startDetached("powershell.exe", QStringList() 
+				<< "-ExecutionPolicy" << "Bypass" 
+				<< "-File" << scriptPath);
+			
+			QTimer::singleShot(1000, this, &QApplication::quit);
+		} else {
+			m_statusLabel->setText("Update ready - restart to install");
+			
+			int result = QMessageBox::information(this, "Update Ready",
+				"Update downloaded successfully!\n\n"
+				"The application will restart to complete the update.",
+				QMessageBox::Ok | QMessageBox::Cancel);
+			
+			if (result == QMessageBox::Ok) {
+				QProcess::startDetached("powershell.exe", QStringList() 
+					<< "-ExecutionPolicy" << "Bypass" 
+					<< "-File" << scriptPath);
+				
+				QTimer::singleShot(1000, this, &QApplication::quit);
+			}
+		}
 	} else {
-		QMessageBox::information(this, "Update Complete",
-			"Update downloaded successfully!\n\n"
-			"Please restart the application to complete the update.");
-		m_statusLabel->setText("Update ready - restart required");
+		m_statusLabel->setText("Failed to create update script");
 	}
+#else
+	m_statusLabel->setText("Update ready - manual restart required");
+	QMessageBox::information(this, "Update Complete",
+		"Update downloaded successfully!\n\n"
+		"Please restart the application to complete the update.");
+#endif
 	
 	m_checkUpdateButton->setEnabled(true);
 	m_progressBar->setVisible(false);
@@ -687,21 +722,85 @@ bool ChonkyLauncher::isNewerVersion(const QString& latestVersion, const QString&
 	return false;
 }
 
+bool ChonkyLauncher::createUpdateScript(const QString& zipPath, const QString& appPath)
+{
+	QString tempDirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Temp";
+	QString scriptPath = tempDirPath + "/update.ps1";
+	QString extractPath = tempDirPath + "/extract";
+	
+	QDir().mkpath(tempDirPath);
+	QDir().mkpath(extractPath);
+	
+	QString tempZipPath = extractPath + "/temp_download_update.zip";
+	if (!QFile::copy(zipPath, tempZipPath)) {
+		qDebug() << "Failed to copy zip file to" << tempZipPath;
+		return false;
+	}
+	
+	QString scriptContent = QStringLiteral(
+		"Set-ExecutionPolicy Bypass -Scope Process -Force\n"
+		"Write-Output \"Starting ChonkyLauncher update...\"\n"
+		"Write-Output \"Extracting update from: %1\"\n"
+		"Write-Output \"Extracting to: %2\"\n"
+		"Write-Output \"Installing to: %3\"\n"
+		"\n"
+		"Expand-Archive -Path '%1' -DestinationPath '%2' -Force\n"
+		"if ($?) {\n"
+		"    Write-Output \"Extraction successful\"\n"
+		"} else {\n"
+		"    Write-Output \"Extraction failed\"\n"
+		"    exit 1\n"
+		"}\n"
+		"\n"
+		"Start-Sleep -Seconds 2\n"
+		"Write-Output \"Copying files to application directory...\"\n"
+		"\n"
+		"Copy-Item -Recurse -Force '%2\\*' '%3\\'\n"
+		"if ($?) {\n"
+		"    Write-Output \"File copy successful\"\n"
+		"} else {\n"
+		"    Write-Output \"File copy failed\"\n"
+		"    exit 1\n"
+		"}\n"
+		"\n"
+		"Start-Sleep -Seconds 2\n"
+		"Write-Output \"Cleaning up temporary files...\"\n"
+		"\n"
+		"Remove-Item -Force -LiteralPath '%3\\update.ps1' -ErrorAction SilentlyContinue\n"
+		"Remove-Item -Force -LiteralPath '%3\\temp_download_update.zip' -ErrorAction SilentlyContinue\n"
+		"Remove-Item -Recurse -Force '%2' -ErrorAction SilentlyContinue\n"
+		"\n"
+		"Write-Output \"Starting updated application...\"\n"
+		"Start-Process -FilePath '%3\\ChonkyLauncher.exe' -WorkingDirectory '%3'\n"
+		"Write-Output \"Update completed successfully!\"\n"
+	).arg(tempZipPath, extractPath, appPath);
+	
+	QFile scriptFile(scriptPath);
+	if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		qDebug() << "Failed to create script file:" << scriptPath;
+		return false;
+	}
+	
+	QTextStream out(&scriptFile);
+	out << scriptContent;
+	scriptFile.close();
+	
+	qDebug() << "Update script created at:" << scriptPath;
+	return true;
+}
+
 bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QString& currentVersion, const QString& lastInstalledReleaseId)
 {
 	QString latestVersion = latestRelease["tag_name"].toString();
 	QString latestReleaseId = latestRelease["id"].toString();
 	
-	// Extract version number from tag (remove 'v' prefix if present)
 	if (latestVersion.startsWith("v")) {
 		latestVersion = latestVersion.mid(1);
 	}
 	
-	// If we've never installed anything before, check version comparison
 	if (lastInstalledReleaseId.isEmpty()) {
 		return isNewerVersion(latestVersion, currentVersion);
 	}
 	
-	// Compare version numbers directly instead of release IDs
 	return isNewerVersion(latestVersion, lastInstalledReleaseId);
 }

@@ -64,6 +64,7 @@ private:
 	QIcon getGameIcon(const QString& gamePath);
 	void downloadAndInstallUpdate(const QString& downloadUrl);
 	void extractAndInstall(const QString& zipPath);
+	bool createUpdateScript(const QString& zipPath, const QString& appPath);
 	bool isNewerVersion(const QString& latestVersion, const QString& currentVersion);
 	bool isNewerRelease(const QJsonObject& latestRelease, const QString& currentVersion, const QString& lastInstalledReleaseId);
 
