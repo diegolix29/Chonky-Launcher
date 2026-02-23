@@ -686,13 +686,16 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 	QString latestVersion = latestRelease["tag_name"].toString();
 	QString latestReleaseId = latestRelease["id"].toString();
 	
+	// Extract version number from tag (remove 'v' prefix if present)
+	if (latestVersion.startsWith("v")) {
+		latestVersion = latestVersion.mid(1);
+	}
+	
+	// If we've never installed anything before, check version comparison
 	if (lastInstalledReleaseId.isEmpty()) {
 		return isNewerVersion(latestVersion, currentVersion);
 	}
 	
-	if (latestReleaseId != lastInstalledReleaseId) {
-		return true;
-	}
-	
-	return false;
+	// Compare version numbers directly instead of release IDs
+	return isNewerVersion(latestVersion, lastInstalledReleaseId);
 }
