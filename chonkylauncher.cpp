@@ -3,7 +3,7 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QThread>
 
-ChonkyLauncher::ChonkyLauncher(QWidget *parent)
+ChonkyLauncher::ChonkyLauncher(QWidget* parent)
     : QMainWindow(parent)
     , m_centralWidget(nullptr)
     , m_mainLayout(nullptr)
@@ -16,16 +16,23 @@ ChonkyLauncher::ChonkyLauncher(QWidget *parent)
     , m_gamesPathEdit(nullptr)
     , m_gamesBrowseButton(nullptr)
     , m_scanButton(nullptr)
+    , m_gameControlsLayout(nullptr)
     , m_gamesListLabel(nullptr)
     , m_gamesList(nullptr)
-    , m_launchButton(nullptr)
+    , m_playButton(nullptr)
+    , m_stopButton(nullptr)
+    , m_iconSizeLayout(nullptr)
+    , m_iconSizeLabel(nullptr)
+    , m_iconSizeSlider(nullptr)
+    , m_iconSizeValue(nullptr)
     , m_progressBar(nullptr)
     , m_statusLabel(nullptr)
     , m_settings(nullptr)
+    , m_gameProcess(nullptr)
 {
     m_settings = new QSettings("ChonkyLauncher", "Settings", this);
-    loadSettings();
     setupUI();
+    loadSettings();
 }
 
 ChonkyLauncher::~ChonkyLauncher()
@@ -68,11 +75,37 @@ void ChonkyLauncher::setupUI()
     m_gamesPathLayout->addWidget(m_scanButton);
     
     m_gamesListLabel = new QLabel("Available Games:");
-    m_gamesList = new QListWidget();
-    m_gamesList->setSelectionMode(QAbstractItemView::SingleSelection);
-    
-    m_launchButton = new QPushButton("Launch Selected Game");
-    m_launchButton->setEnabled(false);
+	m_gamesList = new QListWidget();
+	m_gamesList->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_gamesList->setIconSize(QSize(30, 30));
+	m_gamesList->setViewMode(QListWidget::IconMode);
+	m_gamesList->setResizeMode(QListWidget::Adjust);
+	m_gamesList->setMovement(QListWidget::Static);
+	m_gamesList->setSpacing(5);
+	m_gamesList->setWordWrap(true);
+
+    m_gameControlsLayout = new QHBoxLayout();
+    m_playButton = new QPushButton("▶ Play");
+    m_playButton->setEnabled(false);
+    m_stopButton = new QPushButton("⏹ Stop");
+    m_stopButton->setEnabled(false);
+
+    m_gameControlsLayout->addWidget(m_playButton);
+	m_gameControlsLayout->addWidget(m_stopButton);
+
+	m_iconSizeLayout = new QHBoxLayout();
+	m_iconSizeLabel = new QLabel("Icon Size:");
+	m_iconSizeSlider = new QSlider(Qt::Horizontal);
+	m_iconSizeSlider->setRange(20, 100);
+	m_iconSizeSlider->setValue(30);
+	m_iconSizeSlider->setTickPosition(QSlider::TicksBelow);
+	m_iconSizeSlider->setTickInterval(10);
+	m_iconSizeValue = new QLabel("30px");
+	m_iconSizeValue->setMinimumWidth(40);
+
+	m_iconSizeLayout->addWidget(m_iconSizeLabel);
+	m_iconSizeLayout->addWidget(m_iconSizeSlider);
+	m_iconSizeLayout->addWidget(m_iconSizeValue);
     
     m_progressBar = new QProgressBar();
     m_progressBar->setVisible(false);
@@ -82,15 +115,22 @@ void ChonkyLauncher::setupUI()
     m_mainLayout->addLayout(m_gamesPathLayout);
     m_mainLayout->addWidget(m_gamesListLabel);
     m_mainLayout->addWidget(m_gamesList);
-    m_mainLayout->addWidget(m_launchButton);
+    m_mainLayout->addLayout(m_gameControlsLayout);
+    m_mainLayout->addLayout(m_iconSizeLayout);
     m_mainLayout->addWidget(m_progressBar);
     m_mainLayout->addWidget(m_statusLabel);
     
     connect(m_chonkyBrowseButton, &QPushButton::clicked, this, &ChonkyLauncher::selectChonkyExecutable);
     connect(m_gamesBrowseButton, &QPushButton::clicked, this, &ChonkyLauncher::selectGamesFolder);
     connect(m_scanButton, &QPushButton::clicked, this, &ChonkyLauncher::scanGamesFolder);
-    connect(m_launchButton, &QPushButton::clicked, this, &ChonkyLauncher::launchSelectedGame);
+    connect(m_playButton, &QPushButton::clicked, this, &ChonkyLauncher::launchSelectedGame);
+    connect(m_stopButton, &QPushButton::clicked, this, &ChonkyLauncher::stopGame);
     connect(m_gamesList, &QListWidget::itemDoubleClicked, this, &ChonkyLauncher::onGameItemDoubleClicked);
+    connect(m_gamesList, &QListWidget::itemSelectionChanged, this, [this]() {
+        bool hasSelection = m_gamesList->currentItem() != nullptr;
+        bool isGameRunning = m_gameProcess && m_gameProcess->state() == QProcess::Running;
+        m_playButton->setEnabled(hasSelection && !isGameRunning);
+    });
     connect(m_chonkyPathEdit, &QLineEdit::textChanged, [this]() {
         m_chonkyExecutablePath = m_chonkyPathEdit->text();
         saveSettings();
@@ -101,13 +141,14 @@ void ChonkyLauncher::setupUI()
         saveSettings();
         updateScanButtonState();
     });
+    connect(m_iconSizeSlider, &QSlider::valueChanged, this, &ChonkyLauncher::onIconSizeChanged);
+    
+    updateScanButtonState();
 }
 
 void ChonkyLauncher::updateScanButtonState()
 {
-    bool canScan = !m_chonkyExecutablePath.isEmpty() && 
-                   QFileInfo::exists(m_chonkyExecutablePath) &&
-                   !m_gamesFolderPath.isEmpty() && 
+    bool canScan = !m_gamesFolderPath.isEmpty() && 
                    QFileInfo::exists(m_gamesFolderPath);
     m_scanButton->setEnabled(canScan);
 }
@@ -146,6 +187,21 @@ void ChonkyLauncher::selectGamesFolder()
     }
 }
 
+void ChonkyLauncher::onIconSizeChanged(int size)
+{
+	m_gamesList->setIconSize(QSize(size, size));
+	m_iconSizeValue->setText(QString::number(size) + "px");
+	
+	m_settings->setValue("iconSize", size);
+	
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		QString gamePath = item->data(Qt::UserRole).toString();
+		QIcon icon = getGameIcon(gamePath);
+		item->setIcon(icon);
+	}
+}
+
 void ChonkyLauncher::scanGamesFolder()
 {
     if (m_gamesFolderPath.isEmpty() || !QFileInfo::exists(m_gamesFolderPath)) {
@@ -178,24 +234,55 @@ void ChonkyLauncher::scanGamesFolder()
 void ChonkyLauncher::scanDirectory(const QDir& directory, const QString& basePath)
 {
     QStringList subdirs = directory.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    
+
     for (const QString& subdir : subdirs) {
         QDir subDir(directory.absoluteFilePath(subdir));
-        
+
         if (hasGameFiles(subDir)) {
             QString relativePath = subDir.absolutePath().mid(basePath.length());
             if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
                 relativePath = relativePath.mid(1);
             }
-            
-            QListWidgetItem* item = new QListWidgetItem(subdir);
+
+            QIcon gameIcon = getGameIcon(subDir.absolutePath());
+            QListWidgetItem* item = new QListWidgetItem(gameIcon, subdir);
             item->setData(Qt::UserRole, subDir.absolutePath());
             item->setToolTip(subDir.absolutePath());
+            item->setTextAlignment(Qt::AlignCenter);
             m_gamesList->addItem(item);
         } else {
             scanDirectory(subDir, basePath);
         }
     }
+}
+
+QIcon ChonkyLauncher::getGameIcon(const QString& gamePath)
+{
+	int currentSize = m_iconSizeSlider ? m_iconSizeSlider->value() : 30;
+	
+	QDir sceSysDir(gamePath + "/sce_sys");
+	
+	QStringList iconFiles;
+	iconFiles << "*.ico" << "icon0.png" << "icon.png" << "*.jpg" << "*.png";
+	
+	for (const QString& pattern : iconFiles) {
+		QStringList files = sceSysDir.entryList(QStringList() << pattern, QDir::Files);
+		if (!files.isEmpty()) {
+			QString iconPath = sceSysDir.absoluteFilePath(files.first());
+			QPixmap pixmap(iconPath);
+			if (!pixmap.isNull()) {
+				QPixmap scaledPixmap = pixmap.scaled(currentSize, currentSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+				return QIcon(scaledPixmap);
+			}
+		}
+	}
+	
+	QPixmap defaultPixmap(currentSize, currentSize);
+	defaultPixmap.fill(QColor(100, 100, 100));
+	QPainter painter(&defaultPixmap);
+	painter.setPen(Qt::white);
+	painter.drawText(defaultPixmap.rect(), Qt::AlignCenter, "GAME");
+	return QIcon(defaultPixmap);
 }
 
 bool ChonkyLauncher::hasGameFiles(const QDir& directory)
@@ -227,53 +314,101 @@ void ChonkyLauncher::onGameItemDoubleClicked(QListWidgetItem* item)
 
 void ChonkyLauncher::launchGame(const QString& gamePath)
 {
-    if (m_chonkyExecutablePath.isEmpty() || !QFileInfo::exists(m_chonkyExecutablePath)) {
-        QMessageBox::warning(this, "Error", "ChonkyStation executable not found. Please select the correct path.");
-        return;
-    }
-    
-    m_statusLabel->setText(QString("Launching: %1").arg(QFileInfo(gamePath).baseName()));
-    QApplication::processEvents();
-    
-    QProcess* process = new QProcess(this);
-    QStringList arguments;
-    arguments << gamePath;
-    
-    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-        [this, process, gamePath](int exitCode, QProcess::ExitStatus exitStatus) {
-            if (exitCode != 0 || exitStatus != QProcess::NormalExit) {
-                QMessageBox::warning(this, "Launch Error", 
-                    QString("Failed to launch game from: %1\nExit code: %2")
-                    .arg(gamePath).arg(exitCode));
-            }
-            process->deleteLater();
-            m_statusLabel->setText("Ready");
-        });
-    
-    connect(process, &QProcess::errorOccurred, [this, process, gamePath](QProcess::ProcessError error) {
-        QMessageBox::critical(this, "Process Error", 
-            QString("Failed to start ChonkyStation: %1\nError: %2")
-            .arg(m_chonkyExecutablePath).arg(process->errorString()));
-        process->deleteLater();
-        m_statusLabel->setText("Ready");
-    });
-    
-    process->start(m_chonkyExecutablePath, arguments);
-    
-    if (!process->waitForStarted(5000)) {
-        QMessageBox::critical(this, "Launch Error", 
-            QString("Failed to start ChonkyStation executable:\n%1").arg(m_chonkyExecutablePath));
-        process->deleteLater();
-        m_statusLabel->setText("Ready");
-    } else {
-        m_statusLabel->setText("Game launched successfully!");
-    }
+	if (m_chonkyExecutablePath.isEmpty() || !QFileInfo::exists(m_chonkyExecutablePath)) {
+		QMessageBox::warning(this, "Error", "ChonkyStation executable not found. Please select the correct path.");
+		return;
+	}
+
+	if (m_gameProcess && m_gameProcess->state() == QProcess::Running) {
+		m_gameProcess->terminate();
+		m_gameProcess->waitForFinished(3000);
+		delete m_gameProcess;
+	}
+
+	m_gameProcess = new QProcess(this);
+	QStringList arguments;
+	arguments << gamePath;
+
+	m_statusLabel->setText(QString("Launching: %1").arg(QFileInfo(gamePath).baseName()));
+	m_playButton->setEnabled(false);
+	m_stopButton->setEnabled(true);
+	QApplication::processEvents();
+
+	connect(m_gameProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+		this, &ChonkyLauncher::onGameProcessFinished);
+
+	connect(m_gameProcess, &QProcess::errorOccurred, [this, gamePath](QProcess::ProcessError error) {
+		QMessageBox::critical(this, "Process Error",
+			QString("Failed to start ChonkyStation: %1\nError: %2")
+			.arg(m_chonkyExecutablePath).arg(m_gameProcess->errorString()));
+		m_statusLabel->setText("Ready");
+		m_playButton->setEnabled(true);
+		m_stopButton->setEnabled(false);
+	});
+
+	m_gameProcess->start(m_chonkyExecutablePath, arguments);
+
+	if (!m_gameProcess->waitForStarted(5000)) {
+		QMessageBox::critical(this, "Launch Error",
+			QString("Failed to start ChonkyStation executable:\n%1").arg(m_chonkyExecutablePath));
+		m_statusLabel->setText("Ready");
+		m_playButton->setEnabled(true);
+		m_stopButton->setEnabled(false);
+	}
+	else {
+		m_statusLabel->setText("Game launched successfully!");
+	}
+}
+
+void ChonkyLauncher::stopGame()
+{
+	if (m_gameProcess && m_gameProcess->state() == QProcess::Running) {
+		m_statusLabel->setText("Stopping game...");
+		m_gameProcess->terminate();
+		
+		if (!m_gameProcess->waitForFinished(3000)) {
+            m_statusLabel->setText("Force killing game...");
+
+			m_gameProcess->kill();
+			m_gameProcess->waitForFinished(1000);
+		}
+		
+		m_statusLabel->setText("Game stopped");
+		m_playButton->setEnabled(true);
+		m_stopButton->setEnabled(false);
+	}
+}
+
+void ChonkyLauncher::onGameProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+	m_statusLabel->setText("Game finished");
+	m_playButton->setEnabled(true);
+	m_stopButton->setEnabled(false);
+	
+	if (exitCode != 0 || exitStatus != QProcess::NormalExit) {
+		QMessageBox::warning(this, "Game Error",
+			QString("Game exited with code: %1").arg(exitCode));
+	}
+	
+	m_gameProcess->deleteLater();
+	m_gameProcess = nullptr;
 }
 
 void ChonkyLauncher::loadSettings()
 {
     m_chonkyExecutablePath = m_settings->value("chonkyExecutable", "").toString();
     m_gamesFolderPath = m_settings->value("gamesFolder", "").toString();
+    int iconSize = m_settings->value("iconSize", 30).toInt();
+    
+    m_chonkyPathEdit->setText(m_chonkyExecutablePath);
+    m_gamesPathEdit->setText(m_gamesFolderPath);
+    m_iconSizeSlider->setValue(iconSize);
+    m_iconSizeValue->setText(QString::number(iconSize) + "px");
+    m_gamesList->setIconSize(QSize(iconSize, iconSize));
+    
+	if (!m_gamesFolderPath.isEmpty() && QFileInfo::exists(m_gamesFolderPath)) {
+		QTimer::singleShot(100, this, &ChonkyLauncher::scanGamesFolder);
+    }
 }
 
 void ChonkyLauncher::saveSettings()
