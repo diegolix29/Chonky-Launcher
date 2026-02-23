@@ -4,6 +4,8 @@
 #include <QtCore/QThread>
 #include <QtCore/QDir>
 #include <QtCore/QTextStream>
+#include <QtCore/QFile>
+#include <QtWidgets/QComboBox>
 
 ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	: QMainWindow(parent)
@@ -32,6 +34,9 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_autoUpdateCheckBox(nullptr)
 	, m_autoInstallCheckBox(nullptr)
 	, m_checkUpdateButton(nullptr)
+	, m_themeComboBox(nullptr)
+	, m_themeLayout(nullptr)
+	, m_themeLabel(nullptr)
 	, m_networkManager(nullptr)
 	, m_currentReply(nullptr)
 	, m_currentVersion(QApplication::applicationVersion())
@@ -137,6 +142,15 @@ void ChonkyLauncher::setupUI()
 	m_updateLayout->addWidget(m_autoInstallCheckBox);
 	m_updateLayout->addWidget(m_checkUpdateButton);
 
+	m_themeLayout = new QHBoxLayout();
+	m_themeLabel = new QLabel("Theme:");
+	m_themeComboBox = new QComboBox();
+	m_themeComboBox->setMinimumWidth(150);
+
+	m_themeLayout->addWidget(m_themeLabel);
+	m_themeLayout->addWidget(m_themeComboBox);
+	m_themeLayout->addStretch();
+
 	m_progressBar = new QProgressBar();
 	m_progressBar->setVisible(false);
 	m_statusLabel = new QLabel("Ready");
@@ -149,6 +163,7 @@ void ChonkyLauncher::setupUI()
 	m_mainLayout->addWidget(m_gamesList);
 	m_mainLayout->addLayout(m_iconSizeLayout);
 	m_mainLayout->addLayout(m_updateLayout);
+	m_mainLayout->addLayout(m_themeLayout);
 	m_mainLayout->addWidget(m_progressBar);
 	m_mainLayout->addWidget(m_statusLabel);
 
@@ -177,6 +192,9 @@ void ChonkyLauncher::setupUI()
 	connect(m_autoUpdateCheckBox, &QCheckBox::toggled, this, &ChonkyLauncher::onAutoUpdateToggled);
 	connect(m_autoInstallCheckBox, &QCheckBox::toggled, this, &ChonkyLauncher::saveSettings);
 	connect(m_checkUpdateButton, &QPushButton::clicked, this, &ChonkyLauncher::checkForUpdates);
+	connect(m_themeComboBox, QOverload<const QString&>::of(&QComboBox::currentTextChanged), this, &ChonkyLauncher::onThemeChanged);
+
+	loadThemes();
 
 	updateScanButtonState();
 }
@@ -803,4 +821,75 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 	}
 	
 	return isNewerVersion(latestVersion, lastInstalledReleaseId);
+}
+
+void ChonkyLauncher::loadThemes()
+{
+	QString appDir = QCoreApplication::applicationDirPath();
+	QString themesDir = appDir + "/themes";
+	
+	m_themeComboBox->clear();
+	m_themeComboBox->addItem("Default", "");
+	
+	if (!QDir(themesDir).exists()) {
+		QDir().mkpath(themesDir);
+	}
+	
+	QDir dir(themesDir);
+	QStringList qssFiles = dir.entryList(QStringList() << "*.qss", QDir::Files);
+	
+	for (const QString& fileName : qssFiles) {
+		QString themeName = fileName.left(fileName.length() - 4);
+		m_themeComboBox->addItem(themeName, fileName);
+	}
+	
+	QString savedTheme = m_settings->value("selectedTheme", "").toString();
+	if (!savedTheme.isEmpty()) {
+		int index = m_themeComboBox->findData(savedTheme);
+		if (index >= 0) {
+			m_themeComboBox->setCurrentIndex(index);
+			QString themeFile = m_themeComboBox->currentData().toString();
+			if (!themeFile.isEmpty()) {
+				applyTheme(themeFile.left(themeFile.length() - 4));
+			}
+		}
+	}
+}
+
+void ChonkyLauncher::applyTheme(const QString& themeFile)
+{
+	if (themeFile.isEmpty()) {
+		qApp->setStyleSheet("");
+		return;
+	}
+	
+	QString appDir = QCoreApplication::applicationDirPath();
+	QString themePath = appDir + "/themes/" + themeFile + ".qss";
+	
+	QFile file(themePath);
+	if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		QString stylesheet = QTextStream(&file).readAll();
+		qApp->setStyleSheet(stylesheet);
+		file.close();
+	}
+}
+
+void ChonkyLauncher::onThemeChanged(const QString& themeName)
+{
+	static bool isLoading = true;
+	
+	if (isLoading) {
+		isLoading = false;
+		return;
+	}
+	
+	QString themeFile = m_themeComboBox->currentData().toString();
+	
+	if (themeFile.isEmpty()) {
+		applyTheme("");
+	} else {
+		applyTheme(themeFile.left(themeFile.length() - 4));
+	}
+	
+	m_settings->setValue("selectedTheme", themeFile);
 }

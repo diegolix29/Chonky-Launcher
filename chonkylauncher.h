@@ -67,6 +67,9 @@ private:
 	bool createUpdateScript(const QString& zipPath, const QString& appPath);
 	bool isNewerVersion(const QString& latestVersion, const QString& currentVersion);
 	bool isNewerRelease(const QJsonObject& latestRelease, const QString& currentVersion, const QString& lastInstalledReleaseId);
+	void loadThemes();
+	void applyTheme(const QString& themeName);
+	void onThemeChanged(const QString& themeName);
 
 	QWidget* m_centralWidget;
 	QVBoxLayout* m_mainLayout;
@@ -99,6 +102,11 @@ private:
 	QCheckBox* m_autoUpdateCheckBox;
 	QCheckBox* m_autoInstallCheckBox;
 	QPushButton* m_checkUpdateButton;
+	
+	QComboBox* m_themeComboBox;
+	
+	QHBoxLayout* m_themeLayout;
+	QLabel* m_themeLabel;
 	
 	QNetworkAccessManager* m_networkManager;
 	QNetworkReply* m_currentReply;
