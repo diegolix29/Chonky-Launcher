@@ -21,6 +21,10 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
     , m_gamesList(nullptr)
     , m_playButton(nullptr)
     , m_stopButton(nullptr)
+    , m_iconSizeLayout(nullptr)
+    , m_iconSizeLabel(nullptr)
+    , m_iconSizeSlider(nullptr)
+    , m_iconSizeValue(nullptr)
     , m_progressBar(nullptr)
     , m_statusLabel(nullptr)
     , m_settings(nullptr)
@@ -71,8 +75,14 @@ void ChonkyLauncher::setupUI()
     m_gamesPathLayout->addWidget(m_scanButton);
     
     m_gamesListLabel = new QLabel("Available Games:");
-    m_gamesList = new QListWidget();
-    m_gamesList->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_gamesList = new QListWidget();
+	m_gamesList->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_gamesList->setIconSize(QSize(30, 30));
+	m_gamesList->setViewMode(QListWidget::IconMode);
+	m_gamesList->setResizeMode(QListWidget::Adjust);
+	m_gamesList->setMovement(QListWidget::Static);
+	m_gamesList->setSpacing(5);
+	m_gamesList->setWordWrap(true);
 
     m_gameControlsLayout = new QHBoxLayout();
     m_playButton = new QPushButton("▶ Play");
@@ -81,7 +91,21 @@ void ChonkyLauncher::setupUI()
     m_stopButton->setEnabled(false);
 
     m_gameControlsLayout->addWidget(m_playButton);
-    m_gameControlsLayout->addWidget(m_stopButton);
+	m_gameControlsLayout->addWidget(m_stopButton);
+
+	m_iconSizeLayout = new QHBoxLayout();
+	m_iconSizeLabel = new QLabel("Icon Size:");
+	m_iconSizeSlider = new QSlider(Qt::Horizontal);
+	m_iconSizeSlider->setRange(20, 100);
+	m_iconSizeSlider->setValue(30);
+	m_iconSizeSlider->setTickPosition(QSlider::TicksBelow);
+	m_iconSizeSlider->setTickInterval(10);
+	m_iconSizeValue = new QLabel("30px");
+	m_iconSizeValue->setMinimumWidth(40);
+
+	m_iconSizeLayout->addWidget(m_iconSizeLabel);
+	m_iconSizeLayout->addWidget(m_iconSizeSlider);
+	m_iconSizeLayout->addWidget(m_iconSizeValue);
     
     m_progressBar = new QProgressBar();
     m_progressBar->setVisible(false);
@@ -92,6 +116,7 @@ void ChonkyLauncher::setupUI()
     m_mainLayout->addWidget(m_gamesListLabel);
     m_mainLayout->addWidget(m_gamesList);
     m_mainLayout->addLayout(m_gameControlsLayout);
+    m_mainLayout->addLayout(m_iconSizeLayout);
     m_mainLayout->addWidget(m_progressBar);
     m_mainLayout->addWidget(m_statusLabel);
     
@@ -116,6 +141,7 @@ void ChonkyLauncher::setupUI()
         saveSettings();
         updateScanButtonState();
     });
+    connect(m_iconSizeSlider, &QSlider::valueChanged, this, &ChonkyLauncher::onIconSizeChanged);
     
     updateScanButtonState();
 }
@@ -161,6 +187,23 @@ void ChonkyLauncher::selectGamesFolder()
     }
 }
 
+void ChonkyLauncher::onIconSizeChanged(int size)
+{
+	m_gamesList->setIconSize(QSize(size, size));
+	m_iconSizeValue->setText(QString::number(size) + "px");
+	
+	// Save to settings
+	m_settings->setValue("iconSize", size);
+	
+	// Refresh existing icons
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		QString gamePath = item->data(Qt::UserRole).toString();
+		QIcon icon = getGameIcon(gamePath);
+		item->setIcon(icon);
+	}
+}
+
 void ChonkyLauncher::scanGamesFolder()
 {
     if (m_gamesFolderPath.isEmpty() || !QFileInfo::exists(m_gamesFolderPath)) {
@@ -193,24 +236,62 @@ void ChonkyLauncher::scanGamesFolder()
 void ChonkyLauncher::scanDirectory(const QDir& directory, const QString& basePath)
 {
     QStringList subdirs = directory.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    
+
     for (const QString& subdir : subdirs) {
         QDir subDir(directory.absoluteFilePath(subdir));
-        
+
         if (hasGameFiles(subDir)) {
             QString relativePath = subDir.absolutePath().mid(basePath.length());
             if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
                 relativePath = relativePath.mid(1);
             }
-            
-            QListWidgetItem* item = new QListWidgetItem(subdir);
+
+            QIcon gameIcon = getGameIcon(subDir.absolutePath());
+            QListWidgetItem* item = new QListWidgetItem(gameIcon, subdir);
             item->setData(Qt::UserRole, subDir.absolutePath());
             item->setToolTip(subDir.absolutePath());
+            item->setTextAlignment(Qt::AlignCenter);
             m_gamesList->addItem(item);
         } else {
+            // Recursively scan subdirectories
             scanDirectory(subDir, basePath);
         }
     }
+}
+
+QIcon ChonkyLauncher::getGameIcon(const QString& gamePath)
+{
+	// Get current icon size from slider
+	int currentSize = m_iconSizeSlider ? m_iconSizeSlider->value() : 30;
+	
+	// Look for icon files in sce_sys folder with multiple formats
+	QDir sceSysDir(gamePath + "/sce_sys");
+	
+	// Priority order: .ico, icon0.png, icon.png, .jpg, .png
+	QStringList iconFiles;
+	iconFiles << "*.ico" << "icon0.png" << "icon.png" << "*.jpg" << "*.png";
+	
+	// Try each format in order of priority
+	for (const QString& pattern : iconFiles) {
+		QStringList files = sceSysDir.entryList(QStringList() << pattern, QDir::Files);
+		if (!files.isEmpty()) {
+			QString iconPath = sceSysDir.absoluteFilePath(files.first());
+			QPixmap pixmap(iconPath);
+			if (!pixmap.isNull()) {
+				// Scale to current slider size
+				QPixmap scaledPixmap = pixmap.scaled(currentSize, currentSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+				return QIcon(scaledPixmap);
+			}
+		}
+	}
+	
+	// Fallback to default icon
+	QPixmap defaultPixmap(currentSize, currentSize);
+	defaultPixmap.fill(QColor(100, 100, 100));
+	QPainter painter(&defaultPixmap);
+	painter.setPen(Qt::white);
+	painter.drawText(defaultPixmap.rect(), Qt::AlignCenter, "GAME");
+	return QIcon(defaultPixmap);
 }
 
 bool ChonkyLauncher::hasGameFiles(const QDir& directory)
@@ -326,11 +407,18 @@ void ChonkyLauncher::loadSettings()
 {
     m_chonkyExecutablePath = m_settings->value("chonkyExecutable", "").toString();
     m_gamesFolderPath = m_settings->value("gamesFolder", "").toString();
+    int iconSize = m_settings->value("iconSize", 30).toInt();
     
+    // Set UI elements with loaded values
     m_chonkyPathEdit->setText(m_chonkyExecutablePath);
     m_gamesPathEdit->setText(m_gamesFolderPath);
+    m_iconSizeSlider->setValue(iconSize);
+    m_iconSizeValue->setText(QString::number(iconSize) + "px");
+    m_gamesList->setIconSize(QSize(iconSize, iconSize));
     
+    // Auto-scan games if we have a valid games folder
     if (!m_gamesFolderPath.isEmpty() && QFileInfo::exists(m_gamesFolderPath)) {
+        // Use QTimer to delay scan until after UI is fully shown
         QTimer::singleShot(100, this, &ChonkyLauncher::scanGamesFolder);
     }
 }

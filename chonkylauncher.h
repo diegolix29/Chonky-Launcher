@@ -12,11 +12,15 @@
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressBar>
+#include <QtWidgets/QSlider>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QProcess>
 #include <QtCore/QSettings>
 #include <QtCore/QTimer>
+#include <QtGui/QPixmap>
+#include <QtGui/QIcon>
+#include <QtGui/QPainter>
 
 class ChonkyLauncher : public QMainWindow
 {
@@ -35,6 +39,7 @@ private slots:
 	void onGameItemDoubleClicked(QListWidgetItem* item);
 	void updateScanButtonState();
 	void onGameProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
+	void onIconSizeChanged(int size);
 
 private:
 	void setupUI();
@@ -43,6 +48,7 @@ private:
 	bool hasGameFiles(const QDir& directory);
 	void scanDirectory(const QDir& directory, const QString& basePath);
 	void launchGame(const QString& gamePath);
+	QIcon getGameIcon(const QString& gamePath);
 
 	QWidget* m_centralWidget;
 	QVBoxLayout* m_mainLayout;
@@ -63,6 +69,12 @@ private:
 	QListWidget* m_gamesList;
 	QPushButton* m_playButton;
 	QPushButton* m_stopButton;
+	
+	// Icon size controls
+	QHBoxLayout* m_iconSizeLayout;
+	QLabel* m_iconSizeLabel;
+	QSlider* m_iconSizeSlider;
+	QLabel* m_iconSizeValue;
 
 	QProgressBar* m_progressBar;
 	QLabel* m_statusLabel;
