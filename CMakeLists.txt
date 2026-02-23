@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Find Qt6 components
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -26,7 +26,7 @@ set(SOURCES
 add_executable(ChonkyLauncher ${SOURCES})
 
 # Link Qt libraries
-target_link_libraries(ChonkyLauncher Qt6::Core Qt6::Widgets)
+target_link_libraries(ChonkyLauncher Qt6::Core Qt6::Widgets Qt6::Network)
 
 # Release-specific settings
 if(MSVC)
