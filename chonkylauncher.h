@@ -74,6 +74,8 @@ private:
 	QLabel* m_chonkyPathLabel;
 	QLineEdit* m_chonkyPathEdit;
 	QPushButton* m_chonkyBrowseButton;
+	
+	QLabel* m_versionLabel;
 
 	QHBoxLayout* m_gamesPathLayout;
 	QLabel* m_gamesPathLabel;

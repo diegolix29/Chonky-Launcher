@@ -11,6 +11,7 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_chonkyPathLabel(nullptr)
 	, m_chonkyPathEdit(nullptr)
 	, m_chonkyBrowseButton(nullptr)
+	, m_versionLabel(nullptr)
 	, m_gamesPathLayout(nullptr)
 	, m_gamesPathLabel(nullptr)
 	, m_gamesPathEdit(nullptr)
@@ -31,7 +32,7 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_checkUpdateButton(nullptr)
 	, m_networkManager(nullptr)
 	, m_currentReply(nullptr)
-	, m_currentVersion("1.0.2")
+	, m_currentVersion(QApplication::applicationVersion())
 	, m_tempDir(nullptr)
 	, m_progressBar(nullptr)
 	, m_statusLabel(nullptr)
@@ -61,6 +62,10 @@ void ChonkyLauncher::setupUI()
 	setCentralWidget(m_centralWidget);
 
 	m_mainLayout = new QVBoxLayout(m_centralWidget);
+
+	m_versionLabel = new QLabel("Version: " + m_currentVersion);
+	m_versionLabel->setAlignment(Qt::AlignCenter);
+	m_versionLabel->setStyleSheet("QLabel { font-weight: bold; color: #666; padding: 5px; }");
 
 	m_chonkyPathLayout = new QHBoxLayout();
 	m_chonkyPathLabel = new QLabel("ChonkyStation Executable:");
@@ -134,6 +139,7 @@ void ChonkyLauncher::setupUI()
 	m_progressBar->setVisible(false);
 	m_statusLabel = new QLabel("Ready");
 
+	m_mainLayout->addWidget(m_versionLabel);
 	m_mainLayout->addLayout(m_chonkyPathLayout);
 	m_mainLayout->addLayout(m_gamesPathLayout);
 	m_mainLayout->addLayout(m_gameControlsLayout);
