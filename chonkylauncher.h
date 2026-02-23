@@ -16,6 +16,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QProcess>
 #include <QtCore/QSettings>
+#include <QtCore/QTimer>
 
 class ChonkyLauncher : public QMainWindow
 {
@@ -30,8 +31,10 @@ private slots:
 	void selectGamesFolder();
 	void scanGamesFolder();
 	void launchSelectedGame();
+	void stopGame();
 	void onGameItemDoubleClicked(QListWidgetItem* item);
 	void updateScanButtonState();
+	void onGameProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
 private:
 	void setupUI();
@@ -55,9 +58,11 @@ private:
 	QPushButton* m_gamesBrowseButton;
 	QPushButton* m_scanButton;
 
+	QHBoxLayout* m_gameControlsLayout;
 	QLabel* m_gamesListLabel;
 	QListWidget* m_gamesList;
-	QPushButton* m_launchButton;
+	QPushButton* m_playButton;
+	QPushButton* m_stopButton;
 
 	QProgressBar* m_progressBar;
 	QLabel* m_statusLabel;
@@ -65,6 +70,7 @@ private:
 	QString m_chonkyExecutablePath;
 	QString m_gamesFolderPath;
 	QSettings* m_settings;
+	QProcess* m_gameProcess;
 };
 
 #endif
