@@ -1,0 +1,119 @@
+name: Build and Release ChonkyLauncher
+
+on:
+  push:
+    paths-ignore:
+      - "documents/**"
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "documents/**"
+      - "**/*.md"
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  get-info:
+    runs-on: ubuntu-24.04
+    outputs:
+      date: ${{ steps.vars.outputs.date }}
+      shorthash: ${{ steps.vars.outputs.shorthash }}
+      fullhash: ${{ steps.vars.outputs.fullhash }}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Get date and git hash
+      id: vars
+      run: |
+        echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+        echo "shorthash=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        echo "fullhash=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        echo "shorthash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        echo "fullhash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+  windows:
+    runs-on: windows-2025
+    needs: get-info
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Setup Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: 6.9.3
+        host: windows
+        target: desktop
+        arch: win64_msvc2022_64
+        archives: qtbase qttools
+
+    - name: Cache CMake Configuration
+      uses: actions/cache@v4
+      env:
+          cache-name: ${{ runner.os }}-cache-cmake-configuration
+      with:
+          path: | 
+            ${{github.workspace}}/build
+          key: ${{ env.cache-name }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ env.cache-name }}-
+
+    - name: Configure CMake
+      run: cmake --fresh -G "Visual Studio 17 2022" -A x64 -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --parallel $env:NUMBER_OF_PROCESSORS
+
+    - name: Deploy and Package
+      run: |
+        mkdir upload
+        move build\Release\ChonkyLauncher.exe upload
+        windeployqt --dir upload upload\ChonkyLauncher.exe
+        
+        # Create README for the zip
+        echo "ChonkyStation GUI Launcher" > upload\README.txt
+        echo "==========================" >> upload\README.txt
+        echo "" >> upload\README.txt
+        echo "Usage:" >> upload\README.txt
+        echo "1. Run ChonkyLauncher.exe" >> upload\README.txt
+        echo "2. Select ChonkyStation4.exe path" >> upload\README.txt
+        echo "3. Select your games folder" >> upload\README.txt
+        echo "4. Click 'Scan Games' to detect games" >> upload\README.txt
+        echo "5. Double-click any game to launch" >> upload\README.txt
+        echo "" >> upload\README.txt
+        echo "Requirements:" >> upload\README.txt
+        echo "- ChonkyStation4.exe (not included)" >> upload\README.txt
+        echo "- Games with EBOOT.BIN or .elf files" >> upload\README.txt
+        
+        Compress-Archive -Path upload\* -DestinationPath ChonkyLauncher-Windows.zip
+
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ChonkyLauncher-Windows
+        path: ChonkyLauncher-Windows.zip
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [get-info, windows]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v5
+      with:
+        name: ChonkyLauncher-Windows
+        path: ./
+
+    - name: Create release
+      uses: ncipollo/release-action@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        name: "ChonkyLauncher-${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}"
+        tag: "v${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}"
+        body: "ChonkyStation GUI Launcher Release\n\nCommit: ${{ needs.get-info.outputs.fullhash }}\n\n**Download:** `ChonkyLauncher-Windows.zip`"
+        artifacts: ChonkyLauncher-Windows.zip

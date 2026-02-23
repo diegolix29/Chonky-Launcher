@@ -353,6 +353,34 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 
+# Qt/MOC specific files
+*.moc
+*.moc.cpp
+*.qrc.cpp
+*.ui.cpp
+*_ui.h
+*.pro.user*
+*.qbs.user*
+
+# CMake specific
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# vcpkg
+vcpkg_installed/
+
+# Executables
+ChonkyLauncher
+ChonkyLauncher.exe
+
+# Release packages
+release/
+dist/
+
 # Backup folder for Package Reference Convert tool in Visual Studio 2017
 MigrationBackup/
 
