@@ -6,7 +6,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     
     app.setApplicationName("ChonkyStation Launcher");
-    app.setApplicationVersion("1.0.6");
+    app.setApplicationVersion("1.0.7");
     app.setOrganizationName("ChonkyLauncher");
     
     ChonkyLauncher launcher;
