@@ -60,7 +60,7 @@ private:
 	void scanDirectory(const QDir& directory, const QString& basePath);
 	void scanAllPaths();
 	void addPath();
-	void removePath();
+	void removePath(int index);
 	void updatePathButtons();
 	void updateScanButtonState();
 	void launchGame(const QString& gamePath);
@@ -88,6 +88,7 @@ private:
 	QLabel* m_gamesPathLabel;
 	QVBoxLayout* m_pathsContainerLayout;
 	QWidget* m_pathsContainer;
+	QComboBox* m_pathSelectionComboBox;
 	QPushButton* m_addPathButton;
 	QPushButton* m_removePathButton;
 	QPushButton* m_scanButton;

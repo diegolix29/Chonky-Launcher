@@ -20,6 +20,7 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_gamesPathLabel(nullptr)
 	, m_pathsContainer(nullptr)
 	, m_pathsContainerLayout(nullptr)
+	, m_pathSelectionComboBox(nullptr)
 	, m_addPathButton(nullptr)
 	, m_removePathButton(nullptr)
 	, m_scanButton(nullptr)
@@ -103,19 +104,23 @@ void ChonkyLauncher::setupUI()
 	m_chonkyPathLayout->addWidget(m_chonkyPathEdit);
 	m_chonkyPathLayout->addWidget(m_chonkyBrowseButton);
 
-	m_gamesPathLayout = new QHBoxLayout();
 	m_gamesPathLabel = new QLabel("Games Folders:");
 
 	m_pathsContainer = new QWidget();
 	m_pathsContainerLayout = new QVBoxLayout(m_pathsContainer);
 	m_pathsContainerLayout->setContentsMargins(0, 0, 0, 0);
 
+	m_pathSelectionComboBox = new QComboBox();
+	m_pathSelectionComboBox->setMinimumWidth(200);
+
 	m_addPathButton = new QPushButton("Add Path");
-	m_removePathButton = new QPushButton("Remove Path");
+	m_removePathButton = new QPushButton("Remove Selected");
 	m_scanButton = new QPushButton("Scan All Paths");
 	m_scanButton->setEnabled(false);
 
 	QHBoxLayout* buttonLayout = new QHBoxLayout();
+	buttonLayout->addWidget(new QLabel("Select Path:"));
+	buttonLayout->addWidget(m_pathSelectionComboBox);
 	buttonLayout->addWidget(m_addPathButton);
 	buttonLayout->addWidget(m_removePathButton);
 	buttonLayout->addWidget(m_scanButton);
@@ -196,7 +201,12 @@ void ChonkyLauncher::setupUI()
 
 	connect(m_chonkyBrowseButton, &QPushButton::clicked, this, &ChonkyLauncher::selectChonkyExecutable);
 	connect(m_addPathButton, &QPushButton::clicked, this, &ChonkyLauncher::addPath);
-	connect(m_removePathButton, &QPushButton::clicked, this, &ChonkyLauncher::removePath);
+	connect(m_removePathButton, &QPushButton::clicked, [this]() {
+		int currentIndex = m_pathSelectionComboBox->currentIndex();
+		if (currentIndex >= 0) {
+			removePath(currentIndex);
+		}
+		});
 	connect(m_scanButton, &QPushButton::clicked, this, &ChonkyLauncher::scanAllPaths);
 	connect(m_playButton, &QPushButton::clicked, this, &ChonkyLauncher::launchSelectedGame);
 	connect(m_stopButton, &QPushButton::clicked, this, &ChonkyLauncher::stopGame);
@@ -257,6 +267,9 @@ void ChonkyLauncher::addPath()
 	if (!folderPath.isEmpty() && !m_gamesFolderPaths.contains(folderPath)) {
 		m_gamesFolderPaths.append(folderPath);
 
+		QString displayName = QString("Path %1: %2").arg(m_pathSelectionComboBox->count() + 1).arg(QDir(folderPath).dirName());
+		m_pathSelectionComboBox->addItem(displayName);
+
 		QHBoxLayout* pathRow = new QHBoxLayout();
 		QLineEdit* pathEdit = new QLineEdit(folderPath);
 		pathEdit->setReadOnly(true);
@@ -293,20 +306,27 @@ void ChonkyLauncher::addPath()
 	}
 }
 
-void ChonkyLauncher::removePath()
+void ChonkyLauncher::removePath(int index)
 {
-	if (m_pathRows.isEmpty()) return;
+	if (index < 0 || index >= m_pathRows.size()) return;
 
-	QHBoxLayout* lastRow = m_pathRows.takeLast();
-	QLineEdit* lastEdit = m_pathEdits.takeLast();
-	QPushButton* lastButton = m_pathBrowseButtons.takeLast();
+	QHBoxLayout* row = m_pathRows.takeAt(index);
+	QLineEdit* edit = m_pathEdits.takeAt(index);
+	QPushButton* button = m_pathBrowseButtons.takeAt(index);
+	QString path = m_gamesFolderPaths.takeAt(index);
 
-	m_pathsContainerLayout->removeItem(lastRow);
-	m_gamesFolderPaths.removeLast();
+	m_pathsContainerLayout->removeItem(row);
+	m_pathSelectionComboBox->removeItem(index);
 
-	delete lastEdit;
-	delete lastButton;
-	delete lastRow;
+	delete edit;
+	delete button;
+	delete row;
+
+	m_pathSelectionComboBox->clear();
+	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
+		QString displayName = QString("Path %1: %2").arg(i + 1).arg(QDir(m_gamesFolderPaths[i]).dirName());
+		m_pathSelectionComboBox->addItem(displayName);
+	}
 
 	updatePathButtons();
 	saveSettings();
@@ -525,10 +545,12 @@ void ChonkyLauncher::loadSettings()
 
 	m_gamesFolderPaths = m_settings->value("gamesFolderPaths", QStringList()).toStringList();
 
-	// Create UI for existing paths
-	for (const QString& path : m_gamesFolderPaths) {
+	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
+		QString displayName = QString("Path %1: %2").arg(i + 1).arg(QDir(m_gamesFolderPaths[i]).dirName());
+		m_pathSelectionComboBox->addItem(displayName);
+
 		QHBoxLayout* pathRow = new QHBoxLayout();
-		QLineEdit* pathEdit = new QLineEdit(path);
+		QLineEdit* pathEdit = new QLineEdit(m_gamesFolderPaths[i]);
 		pathEdit->setReadOnly(true);
 		QPushButton* browseButton = new QPushButton("Browse...");
 
@@ -541,7 +563,7 @@ void ChonkyLauncher::loadSettings()
 
 		m_pathsContainerLayout->insertLayout(m_pathRows.size(), pathRow);
 
-		connect(browseButton, &QPushButton::clicked, [this, pathEdit]() {
+		connect(browseButton, &QPushButton::clicked, [this, pathEdit, i]() {
 			QString newPath = QFileDialog::getExistingDirectory(
 				this,
 				"Select Games Folder",
@@ -549,11 +571,11 @@ void ChonkyLauncher::loadSettings()
 				QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
 			);
 			if (!newPath.isEmpty() && !m_gamesFolderPaths.contains(newPath)) {
-				int index = m_pathEdits.indexOf(pathEdit);
-				if (index >= 0) {
-					m_gamesFolderPaths[index] = newPath;
-					pathEdit->setText(newPath);
-				}
+				m_gamesFolderPaths[i] = newPath;
+				pathEdit->setText(newPath);
+
+				QString newDisplayName = QString("Path %1: %2").arg(i + 1).arg(QDir(newPath).dirName());
+				m_pathSelectionComboBox->setItemText(i, newDisplayName);
 			}
 			});
 	}
