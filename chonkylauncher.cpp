@@ -53,9 +53,12 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	QString appDir = QCoreApplication::applicationDirPath();
 	m_configFilePath = appDir + "/config.json";
 	
-	QSettings oldSettings("ChonkyLauncher", "Settings");
-	oldSettings.clear();
-	oldSettings.sync();
+	QFile configFile(m_configFilePath);
+	if (!configFile.exists()) {
+		QSettings oldSettings("ChonkyLauncher", "Settings");
+		oldSettings.clear();
+		oldSettings.sync();
+	}
 	
 	m_networkManager = new QNetworkAccessManager(this);
 
@@ -221,6 +224,12 @@ void ChonkyLauncher::setupUI()
 		m_playButton->setEnabled(hasSelection && !isGameRunning);
 		});
 	connect(m_chonkyPathEdit, &QLineEdit::textChanged, [this]() {
+		static bool isInitialized = false;
+		if (!isInitialized) {
+			isInitialized = true;
+			return;
+		}
+		
 		m_chonkyExecutablePath = m_chonkyPathEdit->text();
 		saveSettings();
 		updateScanButtonState();
@@ -570,54 +579,49 @@ void ChonkyLauncher::onGameProcessFinished(int exitCode, QProcess::ExitStatus ex
 
 void ChonkyLauncher::loadSettings()
 {
+	static bool isLoading = false;
+	if (isLoading) return;
+	isLoading = true;
+	
 	QFile configFile(m_configFilePath);
-
-	QMessageBox::information(this, "Debug Config",
-		QString("Loading config from: %1\nFile exists: %2")
-		.arg(m_configFilePath)
-		.arg(configFile.exists() ? "Yes" : "No"));
-
+	
 	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
 		QByteArray data = configFile.readAll();
 		configFile.close();
-
+		
 		QJsonDocument doc = QJsonDocument::fromJson(data);
 		if (doc.isObject()) {
 			QJsonObject config = doc.object();
-
+			
 			m_chonkyExecutablePath = config["chonkyExecutable"].toString();
 			m_chonkyPathEdit->setText(m_chonkyExecutablePath);
-
+			
 			QJsonArray pathsArray = config["gamesFolderPaths"].toArray();
 			m_gamesFolderPaths.clear();
 			for (const QJsonValue& value : pathsArray) {
 				m_gamesFolderPaths.append(value.toString());
 			}
-
+			
+			qDebug() << "Loaded" << m_gamesFolderPaths.size() << "paths:" << m_gamesFolderPaths;
+			
 			m_autoUpdateCheckBox->setChecked(config["autoUpdate"].toBool(false));
 			m_autoInstallCheckBox->setChecked(config["autoInstall"].toBool(false));
 			m_lastInstalledReleaseId = config["lastInstalledReleaseId"].toString();
-
+			
 			int iconSize = config["iconSize"].toInt(30);
 			m_iconSizeSlider->setValue(iconSize);
 			m_iconSizeValue->setText(QString::number(iconSize) + "px");
 			m_gamesList->setIconSize(QSize(iconSize, iconSize));
-
+			
 			m_checkUpdateButton->setEnabled(m_autoUpdateCheckBox->isChecked());
-
-			QString debugMsg = QString("Loaded %1 paths from JSON:\n").arg(m_gamesFolderPaths.size());
-			for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
-				debugMsg += QString("Path %1: %2\n").arg(i + 1).arg(m_gamesFolderPaths[i]);
-			}
-			QMessageBox::information(this, "Debug Load", debugMsg);
 		}
 	}
 	else {
-		QMessageBox::information(this, "Debug Config", "Config file not found, creating defaults");
+		qDebug() << "Config file not found, using defaults";
 		m_chonkyExecutablePath = "";
 		m_gamesFolderPaths.clear();
 		m_lastInstalledReleaseId = "";
-
+		
 		m_chonkyPathEdit->setText("");
 		m_autoUpdateCheckBox->setChecked(false);
 		m_autoInstallCheckBox->setChecked(false);
@@ -625,11 +629,30 @@ void ChonkyLauncher::loadSettings()
 		m_iconSizeValue->setText("30px");
 		m_gamesList->setIconSize(QSize(30, 30));
 		m_checkUpdateButton->setEnabled(false);
-
+		
 		updatePathButtons();
 		updateScanButtonState();
 	}
-
+	
+	if (!m_pathRows.isEmpty()) {
+		qDebug() << "Clearing" << m_pathRows.size() << "existing UI elements";
+		m_pathSelectionComboBox->clear();
+		for (int i = 0; i < m_pathRows.size(); ++i) {
+			QHBoxLayout* row = m_pathRows[i];
+			QLineEdit* edit = m_pathEdits[i];
+			QPushButton* button = m_pathBrowseButtons[i];
+			
+			m_pathsContainerLayout->removeItem(row);
+			delete edit;
+			delete button;
+			delete row;
+		}
+		m_pathRows.clear();
+		m_pathEdits.clear();
+		m_pathBrowseButtons.clear();
+	}
+	
+	qDebug() << "Creating UI for" << m_gamesFolderPaths.size() << "paths";
 	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
 		QString displayName = QString("Path %1: %2").arg(i + 1).arg(QDir(m_gamesFolderPaths[i]).dirName());
 		m_pathSelectionComboBox->addItem(displayName);
@@ -661,7 +684,7 @@ void ChonkyLauncher::loadSettings()
 
 				QString newDisplayName = QString("Path %1: %2").arg(i + 1).arg(QDir(newPath).dirName());
 				m_pathSelectionComboBox->setItemText(i, newDisplayName);
-
+				
 				saveSettings();
 			}
 			});
@@ -669,20 +692,19 @@ void ChonkyLauncher::loadSettings()
 
 	updatePathButtons();
 	updateScanButtonState();
-
+	
 	if (!m_gamesFolderPaths.isEmpty() && !m_chonkyExecutablePath.isEmpty()) {
 		scanAllPaths();
 	}
+	
+	qDebug() << "loadSettings() finished with" << m_gamesFolderPaths.size() << "paths";
+	isLoading = false;
 }
 
 void ChonkyLauncher::saveSettings()
 {
-	QString debugMsg = QString("Saving %1 paths to JSON:\n").arg(m_gamesFolderPaths.size());
-	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
-		debugMsg += QString("Path %1: %2\n").arg(i + 1).arg(m_gamesFolderPaths[i]);
-	}
-	QMessageBox::information(this, "Debug Save", debugMsg);
-
+	qDebug() << "saveSettings() called with" << m_gamesFolderPaths.size() << "paths:" << m_gamesFolderPaths;
+	
 	QJsonObject config;
 	config["chonkyExecutable"] = m_chonkyExecutablePath;
 
@@ -704,11 +726,9 @@ void ChonkyLauncher::saveSettings()
 	if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
 		configFile.write(doc.toJson());
 		configFile.close();
-
-		QMessageBox::information(this, "Debug Save", "Config saved successfully!");
-	}
-	else {
-		QMessageBox::critical(this, "Error", "Failed to save config file!");
+		qDebug() << "Settings saved successfully to" << m_configFilePath;
+	} else {
+		qDebug() << "Failed to save settings to" << m_configFilePath;
 	}
 }
 
