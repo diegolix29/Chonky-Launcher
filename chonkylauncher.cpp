@@ -52,7 +52,11 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 {
 	QString appDir = QCoreApplication::applicationDirPath();
 	m_configFilePath = appDir + "/config.json";
-
+	
+	QSettings oldSettings("ChonkyLauncher", "Settings");
+	oldSettings.clear();
+	oldSettings.sync();
+	
 	m_networkManager = new QNetworkAccessManager(this);
 
 	setupUI();
