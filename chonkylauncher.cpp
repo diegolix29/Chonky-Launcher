@@ -18,8 +18,10 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_versionLabel(nullptr)
 	, m_gamesPathLayout(nullptr)
 	, m_gamesPathLabel(nullptr)
-	, m_gamesPathEdit(nullptr)
-	, m_gamesBrowseButton(nullptr)
+	, m_pathsContainer(nullptr)
+	, m_pathsContainerLayout(nullptr)
+	, m_addPathButton(nullptr)
+	, m_removePathButton(nullptr)
 	, m_scanButton(nullptr)
 	, m_gameControlsLayout(nullptr)
 	, m_gamesListLabel(nullptr)
@@ -50,7 +52,7 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 {
 	m_settings = new QSettings("ChonkyLauncher", "Settings", this);
 	m_networkManager = new QNetworkAccessManager(this);
-	
+
 	// Load the actual installed version from settings, fallback to hardcoded version
 	QString installedVersion = m_settings->value("lastInstalledReleaseId", "").toString();
 	if (!installedVersion.isEmpty()) {
@@ -59,10 +61,11 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 			installedVersion = installedVersion.mid(1);
 		}
 		m_currentVersion = installedVersion;
-	} else {
+	}
+	else {
 		m_currentVersion = QApplication::applicationVersion();
 	}
-	
+
 	setupUI();
 	loadSettings();
 
@@ -101,18 +104,27 @@ void ChonkyLauncher::setupUI()
 	m_chonkyPathLayout->addWidget(m_chonkyBrowseButton);
 
 	m_gamesPathLayout = new QHBoxLayout();
-	m_gamesPathLabel = new QLabel("Games Folder:");
-	m_gamesPathEdit = new QLineEdit();
-	m_gamesPathEdit->setPlaceholderText("Select games folder...");
-	m_gamesPathEdit->setText(m_gamesFolderPath);
-	m_gamesBrowseButton = new QPushButton("Browse...");
-	m_scanButton = new QPushButton("Scan Games");
+	m_gamesPathLabel = new QLabel("Games Folders:");
+
+	m_pathsContainer = new QWidget();
+	m_pathsContainerLayout = new QVBoxLayout(m_pathsContainer);
+	m_pathsContainerLayout->setContentsMargins(0, 0, 0, 0);
+
+	m_addPathButton = new QPushButton("Add Path");
+	m_removePathButton = new QPushButton("Remove Path");
+	m_scanButton = new QPushButton("Scan All Paths");
 	m_scanButton->setEnabled(false);
 
-	m_gamesPathLayout->addWidget(m_gamesPathLabel);
-	m_gamesPathLayout->addWidget(m_gamesPathEdit);
-	m_gamesPathLayout->addWidget(m_gamesBrowseButton);
-	m_gamesPathLayout->addWidget(m_scanButton);
+	QHBoxLayout* buttonLayout = new QHBoxLayout();
+	buttonLayout->addWidget(m_addPathButton);
+	buttonLayout->addWidget(m_removePathButton);
+	buttonLayout->addWidget(m_scanButton);
+
+	m_pathsContainerLayout->addLayout(buttonLayout);
+
+	QHBoxLayout* gamesPathMainLayout = new QHBoxLayout();
+	gamesPathMainLayout->addWidget(m_gamesPathLabel);
+	gamesPathMainLayout->addWidget(m_pathsContainer, 1);
 
 	m_gameControlsLayout = new QHBoxLayout();
 	m_playButton = new QPushButton("▶ Play");
@@ -172,7 +184,7 @@ void ChonkyLauncher::setupUI()
 
 	m_mainLayout->addWidget(m_versionLabel);
 	m_mainLayout->addLayout(m_chonkyPathLayout);
-	m_mainLayout->addLayout(m_gamesPathLayout);
+	m_mainLayout->addLayout(gamesPathMainLayout);
 	m_mainLayout->addLayout(m_gameControlsLayout);
 	m_mainLayout->addWidget(m_gamesListLabel);
 	m_mainLayout->addWidget(m_gamesList);
@@ -183,8 +195,9 @@ void ChonkyLauncher::setupUI()
 	m_mainLayout->addWidget(m_statusLabel);
 
 	connect(m_chonkyBrowseButton, &QPushButton::clicked, this, &ChonkyLauncher::selectChonkyExecutable);
-	connect(m_gamesBrowseButton, &QPushButton::clicked, this, &ChonkyLauncher::selectGamesFolder);
-	connect(m_scanButton, &QPushButton::clicked, this, &ChonkyLauncher::scanGamesFolder);
+	connect(m_addPathButton, &QPushButton::clicked, this, &ChonkyLauncher::addPath);
+	connect(m_removePathButton, &QPushButton::clicked, this, &ChonkyLauncher::removePath);
+	connect(m_scanButton, &QPushButton::clicked, this, &ChonkyLauncher::scanAllPaths);
 	connect(m_playButton, &QPushButton::clicked, this, &ChonkyLauncher::launchSelectedGame);
 	connect(m_stopButton, &QPushButton::clicked, this, &ChonkyLauncher::stopGame);
 	connect(m_gamesList, &QListWidget::itemDoubleClicked, this, &ChonkyLauncher::onGameItemDoubleClicked);
@@ -195,11 +208,6 @@ void ChonkyLauncher::setupUI()
 		});
 	connect(m_chonkyPathEdit, &QLineEdit::textChanged, [this]() {
 		m_chonkyExecutablePath = m_chonkyPathEdit->text();
-		saveSettings();
-		updateScanButtonState();
-		});
-	connect(m_gamesPathEdit, &QLineEdit::textChanged, [this]() {
-		m_gamesFolderPath = m_gamesPathEdit->text();
 		saveSettings();
 		updateScanButtonState();
 		});
@@ -216,8 +224,7 @@ void ChonkyLauncher::setupUI()
 
 void ChonkyLauncher::updateScanButtonState()
 {
-	bool canScan = !m_gamesFolderPath.isEmpty() &&
-		QFileInfo::exists(m_gamesFolderPath);
+	bool canScan = !m_gamesFolderPaths.isEmpty() && !m_chonkyExecutablePath.isEmpty();
 	m_scanButton->setEnabled(canScan);
 }
 
@@ -238,21 +245,98 @@ void ChonkyLauncher::selectChonkyExecutable()
 	}
 }
 
-void ChonkyLauncher::selectGamesFolder()
+void ChonkyLauncher::addPath()
 {
 	QString folderPath = QFileDialog::getExistingDirectory(
 		this,
 		"Select Games Folder",
-		m_gamesFolderPath.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::HomeLocation) : m_gamesFolderPath,
+		QStandardPaths::writableLocation(QStandardPaths::HomeLocation),
 		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
 	);
 
-	if (!folderPath.isEmpty()) {
-		m_gamesFolderPath = folderPath;
-		m_gamesPathEdit->setText(folderPath);
+	if (!folderPath.isEmpty() && !m_gamesFolderPaths.contains(folderPath)) {
+		m_gamesFolderPaths.append(folderPath);
+
+		QHBoxLayout* pathRow = new QHBoxLayout();
+		QLineEdit* pathEdit = new QLineEdit(folderPath);
+		pathEdit->setReadOnly(true);
+		QPushButton* browseButton = new QPushButton("Browse...");
+
+		pathRow->addWidget(pathEdit, 1);
+		pathRow->addWidget(browseButton);
+
+		m_pathRows.append(pathRow);
+		m_pathEdits.append(pathEdit);
+		m_pathBrowseButtons.append(browseButton);
+
+		m_pathsContainerLayout->insertLayout(m_pathRows.size(), pathRow);
+
+		connect(browseButton, &QPushButton::clicked, [this, pathEdit]() {
+			QString newPath = QFileDialog::getExistingDirectory(
+				this,
+				"Select Games Folder",
+				pathEdit->text(),
+				QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
+			);
+			if (!newPath.isEmpty() && !m_gamesFolderPaths.contains(newPath)) {
+				int index = m_pathEdits.indexOf(pathEdit);
+				if (index >= 0) {
+					m_gamesFolderPaths[index] = newPath;
+					pathEdit->setText(newPath);
+				}
+			}
+			});
+
+		updatePathButtons();
 		saveSettings();
 		updateScanButtonState();
 	}
+}
+
+void ChonkyLauncher::removePath()
+{
+	if (m_pathRows.isEmpty()) return;
+
+	QHBoxLayout* lastRow = m_pathRows.takeLast();
+	QLineEdit* lastEdit = m_pathEdits.takeLast();
+	QPushButton* lastButton = m_pathBrowseButtons.takeLast();
+
+	m_pathsContainerLayout->removeItem(lastRow);
+	m_gamesFolderPaths.removeLast();
+
+	delete lastEdit;
+	delete lastButton;
+	delete lastRow;
+
+	updatePathButtons();
+	saveSettings();
+	updateScanButtonState();
+}
+
+void ChonkyLauncher::updatePathButtons()
+{
+	m_removePathButton->setEnabled(!m_pathRows.isEmpty());
+}
+
+void ChonkyLauncher::scanAllPaths()
+{
+	m_gamesList->clear();
+
+	if (m_chonkyExecutablePath.isEmpty()) {
+		QMessageBox::warning(this, "Warning", "Please select ChonkyStation executable first.");
+		return;
+	}
+
+	m_statusLabel->setText("Scanning paths...");
+
+	for (const QString& path : m_gamesFolderPaths) {
+		QDir dir(path);
+		if (dir.exists()) {
+			scanDirectory(dir, path);
+		}
+	}
+
+	m_statusLabel->setText(QString("Found %1 games").arg(m_gamesList->count()));
 }
 
 void ChonkyLauncher::onIconSizeChanged(int size)
@@ -267,35 +351,6 @@ void ChonkyLauncher::onIconSizeChanged(int size)
 		QString gamePath = item->data(Qt::UserRole).toString();
 		QIcon icon = getGameIcon(gamePath);
 		item->setIcon(icon);
-	}
-}
-
-void ChonkyLauncher::scanGamesFolder()
-{
-	if (m_gamesFolderPath.isEmpty() || !QFileInfo::exists(m_gamesFolderPath)) {
-		QMessageBox::warning(this, "Error", "Please select a valid games folder.");
-		return;
-	}
-
-	m_gamesList->clear();
-	m_progressBar->setVisible(true);
-	m_progressBar->setRange(0, 0);
-	m_statusLabel->setText("Scanning for games...");
-	m_scanButton->setEnabled(false);
-
-	QApplication::processEvents();
-
-	QDir gamesDir(m_gamesFolderPath);
-	scanDirectory(gamesDir, m_gamesFolderPath);
-
-	m_progressBar->setVisible(false);
-	m_statusLabel->setText(QString("Found %1 games").arg(m_gamesList->count()));
-	m_scanButton->setEnabled(true);
-
-	if (m_gamesList->count() == 0) {
-		QMessageBox::information(this, "No Games Found",
-			"No folders containing EBOOT or ELF files were found.\n"
-			"Make sure your games folder contains subdirectories with game files.");
 	}
 }
 
@@ -466,30 +521,60 @@ void ChonkyLauncher::onGameProcessFinished(int exitCode, QProcess::ExitStatus ex
 void ChonkyLauncher::loadSettings()
 {
 	m_chonkyExecutablePath = m_settings->value("chonkyExecutable", "").toString();
-	m_gamesFolderPath = m_settings->value("gamesFolder", "").toString();
-	int iconSize = m_settings->value("iconSize", 30).toInt();
-	bool autoUpdate = m_settings->value("autoUpdate", false).toBool();
-	bool autoInstall = m_settings->value("autoInstall", false).toBool();
-	m_lastInstalledReleaseId = m_settings->value("lastInstalledReleaseId", "").toString();
-
 	m_chonkyPathEdit->setText(m_chonkyExecutablePath);
-	m_gamesPathEdit->setText(m_gamesFolderPath);
+
+	m_gamesFolderPaths = m_settings->value("gamesFolderPaths", QStringList()).toStringList();
+
+	// Create UI for existing paths
+	for (const QString& path : m_gamesFolderPaths) {
+		QHBoxLayout* pathRow = new QHBoxLayout();
+		QLineEdit* pathEdit = new QLineEdit(path);
+		pathEdit->setReadOnly(true);
+		QPushButton* browseButton = new QPushButton("Browse...");
+
+		pathRow->addWidget(pathEdit, 1);
+		pathRow->addWidget(browseButton);
+
+		m_pathRows.append(pathRow);
+		m_pathEdits.append(pathEdit);
+		m_pathBrowseButtons.append(browseButton);
+
+		m_pathsContainerLayout->insertLayout(m_pathRows.size(), pathRow);
+
+		connect(browseButton, &QPushButton::clicked, [this, pathEdit]() {
+			QString newPath = QFileDialog::getExistingDirectory(
+				this,
+				"Select Games Folder",
+				pathEdit->text(),
+				QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
+			);
+			if (!newPath.isEmpty() && !m_gamesFolderPaths.contains(newPath)) {
+				int index = m_pathEdits.indexOf(pathEdit);
+				if (index >= 0) {
+					m_gamesFolderPaths[index] = newPath;
+					pathEdit->setText(newPath);
+				}
+			}
+			});
+	}
+
+	int iconSize = m_settings->value("iconSize", 30).toInt();
 	m_iconSizeSlider->setValue(iconSize);
 	m_iconSizeValue->setText(QString::number(iconSize) + "px");
 	m_gamesList->setIconSize(QSize(iconSize, iconSize));
-	m_autoUpdateCheckBox->setChecked(autoUpdate);
-	m_autoInstallCheckBox->setChecked(autoInstall);
-	m_checkUpdateButton->setEnabled(autoUpdate);
 
-	if (!m_gamesFolderPath.isEmpty() && QFileInfo::exists(m_gamesFolderPath)) {
-		QTimer::singleShot(100, this, &ChonkyLauncher::scanGamesFolder);
-	}
+	m_autoUpdateCheckBox->setChecked(m_settings->value("autoUpdate", false).toBool());
+	m_autoInstallCheckBox->setChecked(m_settings->value("autoInstall", false).toBool());
+	m_checkUpdateButton->setEnabled(m_autoUpdateCheckBox->isChecked());
+
+	updatePathButtons();
+	updateScanButtonState();
 }
 
 void ChonkyLauncher::saveSettings()
 {
 	m_settings->setValue("chonkyExecutable", m_chonkyExecutablePath);
-	m_settings->setValue("gamesFolder", m_gamesFolderPath);
+	m_settings->setValue("gamesFolderPaths", m_gamesFolderPaths);
 	m_settings->setValue("autoUpdate", m_autoUpdateCheckBox ? m_autoUpdateCheckBox->isChecked() : false);
 	m_settings->setValue("autoInstall", m_autoInstallCheckBox ? m_autoInstallCheckBox->isChecked() : false);
 	m_settings->setValue("lastInstalledReleaseId", m_lastInstalledReleaseId);
@@ -577,11 +662,12 @@ void ChonkyLauncher::onReleasesFetched()
 
 	if (isNewerRelease(latestRelease, m_currentVersion, m_lastInstalledReleaseId)) {
 		bool shouldInstall = false;
-		
+
 		if (m_autoInstallCheckBox && m_autoInstallCheckBox->isChecked()) {
 			shouldInstall = true;
 			m_statusLabel->setText("Auto-installing update...");
-		} else {
+		}
+		else {
 			QString message = QString("New version available: %1\nCurrent version: %2\n\nDownload and install?")
 				.arg(latestName)
 				.arg(m_currentVersion);
@@ -693,35 +779,37 @@ void ChonkyLauncher::extractAndInstall(const QString& zipPath)
 	QString appPath = QCoreApplication::applicationDirPath();
 	QString tempDirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Temp";
 	QDir().mkpath(tempDirPath);
-	
+
 	if (createUpdateScript(zipPath, appPath)) {
 		QString scriptPath = tempDirPath + "/update.ps1";
-		
+
 		if (m_autoInstallCheckBox && m_autoInstallCheckBox->isChecked()) {
 			m_statusLabel->setText("Update downloaded - restarting for installation...");
-			
-			QProcess::startDetached("powershell.exe", QStringList() 
-				<< "-ExecutionPolicy" << "Bypass" 
+
+			QProcess::startDetached("powershell.exe", QStringList()
+				<< "-ExecutionPolicy" << "Bypass"
 				<< "-File" << scriptPath);
-			
+
 			QTimer::singleShot(1000, this, &QApplication::quit);
-		} else {
+		}
+		else {
 			m_statusLabel->setText("Update ready - restart to install");
-			
+
 			int result = QMessageBox::information(this, "Update Ready",
 				"Update downloaded successfully!\n\n"
 				"The application will restart to complete the update.",
 				QMessageBox::Ok | QMessageBox::Cancel);
-			
+
 			if (result == QMessageBox::Ok) {
-				QProcess::startDetached("powershell.exe", QStringList() 
-					<< "-ExecutionPolicy" << "Bypass" 
+				QProcess::startDetached("powershell.exe", QStringList()
+					<< "-ExecutionPolicy" << "Bypass"
 					<< "-File" << scriptPath);
-				
+
 				QTimer::singleShot(1000, this, &QApplication::quit);
 			}
 		}
-	} else {
+	}
+	else {
 		m_statusLabel->setText("Failed to create update script");
 	}
 #else
@@ -730,7 +818,7 @@ void ChonkyLauncher::extractAndInstall(const QString& zipPath)
 		"Update downloaded successfully!\n\n"
 		"Please restart the application to complete the update.");
 #endif
-	
+
 	m_checkUpdateButton->setEnabled(true);
 	m_progressBar->setVisible(false);
 
@@ -761,16 +849,16 @@ bool ChonkyLauncher::createUpdateScript(const QString& zipPath, const QString& a
 	QString tempDirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Temp";
 	QString scriptPath = tempDirPath + "/update.ps1";
 	QString extractPath = tempDirPath + "/extract";
-	
+
 	QDir().mkpath(tempDirPath);
 	QDir().mkpath(extractPath);
-	
+
 	QString tempZipPath = extractPath + "/temp_download_update.zip";
 	if (!QFile::copy(zipPath, tempZipPath)) {
 		qDebug() << "Failed to copy zip file to" << tempZipPath;
 		return false;
 	}
-	
+
 	QString scriptContent = QStringLiteral(
 		"Set-ExecutionPolicy Bypass -Scope Process -Force\n"
 		"Write-Output \"Starting ChonkyLauncher update...\"\n"
@@ -808,17 +896,17 @@ bool ChonkyLauncher::createUpdateScript(const QString& zipPath, const QString& a
 		"Start-Process -FilePath '%3\\ChonkyLauncher.exe' -WorkingDirectory '%3'\n"
 		"Write-Output \"Update completed successfully!\"\n"
 	).arg(tempZipPath, extractPath, appPath);
-	
+
 	QFile scriptFile(scriptPath);
 	if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
 		qDebug() << "Failed to create script file:" << scriptPath;
 		return false;
 	}
-	
+
 	QTextStream out(&scriptFile);
 	out << scriptContent;
 	scriptFile.close();
-	
+
 	qDebug() << "Update script created at:" << scriptPath;
 	return true;
 }
@@ -827,11 +915,11 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 {
 	QString latestVersion = latestRelease["tag_name"].toString();
 	QString latestReleaseId = latestRelease["id"].toString();
-	
+
 	if (latestVersion.startsWith("v")) {
 		latestVersion = latestVersion.mid(1);
 	}
-	
+
 	// If we have a last installed release ID, compare with that
 	if (!lastInstalledReleaseId.isEmpty()) {
 		// Convert lastInstalledReleaseId to version format for comparison
@@ -841,7 +929,7 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 		}
 		return isNewerVersion(latestVersion, lastInstalledVersion);
 	}
-	
+
 	// Fallback to comparing with current version
 	return isNewerVersion(latestVersion, currentVersion);
 }
@@ -850,22 +938,22 @@ void ChonkyLauncher::loadThemes()
 {
 	QString appDir = QCoreApplication::applicationDirPath();
 	QString themesDir = appDir + "/themes";
-	
+
 	m_themeComboBox->clear();
 	m_themeComboBox->addItem("Default", "");
-	
+
 	if (!QDir(themesDir).exists()) {
 		QDir().mkpath(themesDir);
 	}
-	
+
 	QDir dir(themesDir);
 	QStringList qssFiles = dir.entryList(QStringList() << "*.qss", QDir::Files);
-	
+
 	for (const QString& fileName : qssFiles) {
 		QString themeName = fileName.left(fileName.length() - 4);
 		m_themeComboBox->addItem(themeName, fileName);
 	}
-	
+
 	QString savedTheme = m_settings->value("selectedTheme", "").toString();
 	if (!savedTheme.isEmpty()) {
 		int index = m_themeComboBox->findData(savedTheme);
@@ -885,10 +973,10 @@ void ChonkyLauncher::applyTheme(const QString& themeFile)
 		qApp->setStyleSheet("");
 		return;
 	}
-	
+
 	QString appDir = QCoreApplication::applicationDirPath();
 	QString themePath = appDir + "/themes/" + themeFile + ".qss";
-	
+
 	QFile file(themePath);
 	if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
 		QString stylesheet = QTextStream(&file).readAll();
@@ -900,19 +988,20 @@ void ChonkyLauncher::applyTheme(const QString& themeFile)
 void ChonkyLauncher::onThemeChanged(const QString& themeName)
 {
 	static bool isLoading = true;
-	
+
 	if (isLoading) {
 		isLoading = false;
 		return;
 	}
-	
+
 	QString themeFile = m_themeComboBox->currentData().toString();
-	
+
 	if (themeFile.isEmpty()) {
 		applyTheme("");
-	} else {
+	}
+	else {
 		applyTheme(themeFile.left(themeFile.length() - 4));
 	}
-	
+
 	m_settings->setValue("selectedTheme", themeFile);
 }

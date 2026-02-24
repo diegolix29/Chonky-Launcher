@@ -29,6 +29,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QList>
 
 class ChonkyLauncher : public QMainWindow
 {
@@ -40,12 +41,9 @@ public:
 
 private slots:
 	void selectChonkyExecutable();
-	void selectGamesFolder();
-	void scanGamesFolder();
 	void launchSelectedGame();
 	void stopGame();
 	void onGameItemDoubleClicked(QListWidgetItem* item);
-	void updateScanButtonState();
 	void onGameProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
 	void onIconSizeChanged(int size);
 	void checkForUpdates();
@@ -60,6 +58,11 @@ private:
 	void saveSettings();
 	bool hasGameFiles(const QDir& directory);
 	void scanDirectory(const QDir& directory, const QString& basePath);
+	void scanAllPaths();
+	void addPath();
+	void removePath();
+	void updatePathButtons();
+	void updateScanButtonState();
 	void launchGame(const QString& gamePath);
 	QIcon getGameIcon(const QString& gamePath);
 	void downloadAndInstallUpdate(const QString& downloadUrl);
@@ -78,36 +81,41 @@ private:
 	QLabel* m_chonkyPathLabel;
 	QLineEdit* m_chonkyPathEdit;
 	QPushButton* m_chonkyBrowseButton;
-	
+
 	QLabel* m_versionLabel;
 
 	QHBoxLayout* m_gamesPathLayout;
 	QLabel* m_gamesPathLabel;
-	QLineEdit* m_gamesPathEdit;
-	QPushButton* m_gamesBrowseButton;
+	QVBoxLayout* m_pathsContainerLayout;
+	QWidget* m_pathsContainer;
+	QPushButton* m_addPathButton;
+	QPushButton* m_removePathButton;
 	QPushButton* m_scanButton;
+	QList<QHBoxLayout*> m_pathRows;
+	QList<QLineEdit*> m_pathEdits;
+	QList<QPushButton*> m_pathBrowseButtons;
 
 	QHBoxLayout* m_gameControlsLayout;
 	QLabel* m_gamesListLabel;
 	QListWidget* m_gamesList;
 	QPushButton* m_playButton;
 	QPushButton* m_stopButton;
-	
+
 	QHBoxLayout* m_iconSizeLayout;
 	QLabel* m_iconSizeLabel;
 	QSlider* m_iconSizeSlider;
 	QLabel* m_iconSizeValue;
-	
+
 	QHBoxLayout* m_updateLayout;
 	QCheckBox* m_autoUpdateCheckBox;
 	QCheckBox* m_autoInstallCheckBox;
 	QPushButton* m_checkUpdateButton;
-	
+
 	QComboBox* m_themeComboBox;
-	
+
 	QHBoxLayout* m_themeLayout;
 	QLabel* m_themeLabel;
-	
+
 	QNetworkAccessManager* m_networkManager;
 	QNetworkReply* m_currentReply;
 	QString m_currentVersion;
@@ -121,7 +129,7 @@ private:
 	QLabel* m_statusLabel;
 
 	QString m_chonkyExecutablePath;
-	QString m_gamesFolderPath;
+	QStringList m_gamesFolderPaths;
 	QSettings* m_settings;
 	QProcess* m_gameProcess;
 };
