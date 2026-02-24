@@ -48,16 +48,19 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_tempDir(nullptr)
 	, m_progressBar(nullptr)
 	, m_statusLabel(nullptr)
-	, m_settings(nullptr)
 	, m_gameProcess(nullptr)
 {
-	m_settings = new QSettings("ChonkyLauncher", "Settings", this);
+	QString appDir = QCoreApplication::applicationDirPath();
+	m_configFilePath = appDir + "/config.json";
+
 	m_networkManager = new QNetworkAccessManager(this);
 
-	// Load the actual installed version from settings, fallback to hardcoded version
-	QString installedVersion = m_settings->value("lastInstalledReleaseId", "").toString();
-	if (!installedVersion.isEmpty()) {
-		// Remove 'v' prefix if present
+	setupUI();
+
+	loadSettings();
+
+	if (!m_lastInstalledReleaseId.isEmpty()) {
+		QString installedVersion = m_lastInstalledReleaseId;
 		if (installedVersion.startsWith("v")) {
 			installedVersion = installedVersion.mid(1);
 		}
@@ -66,9 +69,6 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	else {
 		m_currentVersion = QApplication::applicationVersion();
 	}
-
-	setupUI();
-	loadSettings();
 
 	if (m_autoUpdateCheckBox && m_autoUpdateCheckBox->isChecked()) {
 		QTimer::singleShot(2000, this, &ChonkyLauncher::checkForUpdates);
@@ -296,6 +296,13 @@ void ChonkyLauncher::addPath()
 				if (index >= 0) {
 					m_gamesFolderPaths[index] = newPath;
 					pathEdit->setText(newPath);
+
+					// Update combo box display
+					QString newDisplayName = QString("Path %1: %2").arg(index + 1).arg(QDir(newPath).dirName());
+					m_pathSelectionComboBox->setItemText(index, newDisplayName);
+
+					// Save settings
+					saveSettings();
 				}
 			}
 			});
@@ -364,7 +371,26 @@ void ChonkyLauncher::onIconSizeChanged(int size)
 	m_gamesList->setIconSize(QSize(size, size));
 	m_iconSizeValue->setText(QString::number(size) + "px");
 
-	m_settings->setValue("iconSize", size);
+	QFile configFile(m_configFilePath);
+	QJsonObject config;
+
+	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		QByteArray data = configFile.readAll();
+		configFile.close();
+
+		QJsonDocument doc = QJsonDocument::fromJson(data);
+		if (doc.isObject()) {
+			config = doc.object();
+		}
+	}
+
+	config["iconSize"] = size;
+
+	if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		QJsonDocument doc(config);
+		configFile.write(doc.toJson());
+		configFile.close();
+	}
 
 	for (int i = 0; i < m_gamesList->count(); ++i) {
 		QListWidgetItem* item = m_gamesList->item(i);
@@ -540,10 +566,65 @@ void ChonkyLauncher::onGameProcessFinished(int exitCode, QProcess::ExitStatus ex
 
 void ChonkyLauncher::loadSettings()
 {
-	m_chonkyExecutablePath = m_settings->value("chonkyExecutable", "").toString();
-	m_chonkyPathEdit->setText(m_chonkyExecutablePath);
+	QFile configFile(m_configFilePath);
 
-	m_gamesFolderPaths = m_settings->value("gamesFolderPaths", QStringList()).toStringList();
+	QMessageBox::information(this, "Debug Config",
+		QString("Loading config from: %1\nFile exists: %2")
+		.arg(m_configFilePath)
+		.arg(configFile.exists() ? "Yes" : "No"));
+
+	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		QByteArray data = configFile.readAll();
+		configFile.close();
+
+		QJsonDocument doc = QJsonDocument::fromJson(data);
+		if (doc.isObject()) {
+			QJsonObject config = doc.object();
+
+			m_chonkyExecutablePath = config["chonkyExecutable"].toString();
+			m_chonkyPathEdit->setText(m_chonkyExecutablePath);
+
+			QJsonArray pathsArray = config["gamesFolderPaths"].toArray();
+			m_gamesFolderPaths.clear();
+			for (const QJsonValue& value : pathsArray) {
+				m_gamesFolderPaths.append(value.toString());
+			}
+
+			m_autoUpdateCheckBox->setChecked(config["autoUpdate"].toBool(false));
+			m_autoInstallCheckBox->setChecked(config["autoInstall"].toBool(false));
+			m_lastInstalledReleaseId = config["lastInstalledReleaseId"].toString();
+
+			int iconSize = config["iconSize"].toInt(30);
+			m_iconSizeSlider->setValue(iconSize);
+			m_iconSizeValue->setText(QString::number(iconSize) + "px");
+			m_gamesList->setIconSize(QSize(iconSize, iconSize));
+
+			m_checkUpdateButton->setEnabled(m_autoUpdateCheckBox->isChecked());
+
+			QString debugMsg = QString("Loaded %1 paths from JSON:\n").arg(m_gamesFolderPaths.size());
+			for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
+				debugMsg += QString("Path %1: %2\n").arg(i + 1).arg(m_gamesFolderPaths[i]);
+			}
+			QMessageBox::information(this, "Debug Load", debugMsg);
+		}
+	}
+	else {
+		QMessageBox::information(this, "Debug Config", "Config file not found, creating defaults");
+		m_chonkyExecutablePath = "";
+		m_gamesFolderPaths.clear();
+		m_lastInstalledReleaseId = "";
+
+		m_chonkyPathEdit->setText("");
+		m_autoUpdateCheckBox->setChecked(false);
+		m_autoInstallCheckBox->setChecked(false);
+		m_iconSizeSlider->setValue(30);
+		m_iconSizeValue->setText("30px");
+		m_gamesList->setIconSize(QSize(30, 30));
+		m_checkUpdateButton->setEnabled(false);
+
+		updatePathButtons();
+		updateScanButtonState();
+	}
 
 	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
 		QString displayName = QString("Path %1: %2").arg(i + 1).arg(QDir(m_gamesFolderPaths[i]).dirName());
@@ -576,30 +657,55 @@ void ChonkyLauncher::loadSettings()
 
 				QString newDisplayName = QString("Path %1: %2").arg(i + 1).arg(QDir(newPath).dirName());
 				m_pathSelectionComboBox->setItemText(i, newDisplayName);
+
+				saveSettings();
 			}
 			});
 	}
 
-	int iconSize = m_settings->value("iconSize", 30).toInt();
-	m_iconSizeSlider->setValue(iconSize);
-	m_iconSizeValue->setText(QString::number(iconSize) + "px");
-	m_gamesList->setIconSize(QSize(iconSize, iconSize));
-
-	m_autoUpdateCheckBox->setChecked(m_settings->value("autoUpdate", false).toBool());
-	m_autoInstallCheckBox->setChecked(m_settings->value("autoInstall", false).toBool());
-	m_checkUpdateButton->setEnabled(m_autoUpdateCheckBox->isChecked());
-
 	updatePathButtons();
 	updateScanButtonState();
+
+	if (!m_gamesFolderPaths.isEmpty() && !m_chonkyExecutablePath.isEmpty()) {
+		scanAllPaths();
+	}
 }
 
 void ChonkyLauncher::saveSettings()
 {
-	m_settings->setValue("chonkyExecutable", m_chonkyExecutablePath);
-	m_settings->setValue("gamesFolderPaths", m_gamesFolderPaths);
-	m_settings->setValue("autoUpdate", m_autoUpdateCheckBox ? m_autoUpdateCheckBox->isChecked() : false);
-	m_settings->setValue("autoInstall", m_autoInstallCheckBox ? m_autoInstallCheckBox->isChecked() : false);
-	m_settings->setValue("lastInstalledReleaseId", m_lastInstalledReleaseId);
+	QString debugMsg = QString("Saving %1 paths to JSON:\n").arg(m_gamesFolderPaths.size());
+	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
+		debugMsg += QString("Path %1: %2\n").arg(i + 1).arg(m_gamesFolderPaths[i]);
+	}
+	QMessageBox::information(this, "Debug Save", debugMsg);
+
+	QJsonObject config;
+	config["chonkyExecutable"] = m_chonkyExecutablePath;
+
+	QJsonArray pathsArray;
+	for (const QString& path : m_gamesFolderPaths) {
+		pathsArray.append(path);
+	}
+	config["gamesFolderPaths"] = pathsArray;
+
+	config["autoUpdate"] = m_autoUpdateCheckBox ? m_autoUpdateCheckBox->isChecked() : false;
+	config["autoInstall"] = m_autoInstallCheckBox ? m_autoInstallCheckBox->isChecked() : false;
+	config["lastInstalledReleaseId"] = m_lastInstalledReleaseId;
+	config["iconSize"] = m_iconSizeSlider ? m_iconSizeSlider->value() : 30;
+	config["selectedTheme"] = m_themeComboBox->currentData().toString();
+
+	QJsonDocument doc(config);
+
+	QFile configFile(m_configFilePath);
+	if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		configFile.write(doc.toJson());
+		configFile.close();
+
+		QMessageBox::information(this, "Debug Save", "Config saved successfully!");
+	}
+	else {
+		QMessageBox::critical(this, "Error", "Failed to save config file!");
+	}
 }
 
 void ChonkyLauncher::onAutoUpdateToggled(bool enabled)
@@ -793,7 +899,6 @@ void ChonkyLauncher::onDownloadFinished()
 
 void ChonkyLauncher::extractAndInstall(const QString& zipPath)
 {
-	// Save the current latest version as the last installed version
 	m_lastInstalledReleaseId = m_latestVersion;
 	saveSettings();
 
@@ -942,9 +1047,7 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 		latestVersion = latestVersion.mid(1);
 	}
 
-	// If we have a last installed release ID, compare with that
 	if (!lastInstalledReleaseId.isEmpty()) {
-		// Convert lastInstalledReleaseId to version format for comparison
 		QString lastInstalledVersion = lastInstalledReleaseId;
 		if (lastInstalledVersion.startsWith("v")) {
 			lastInstalledVersion = lastInstalledVersion.mid(1);
@@ -952,7 +1055,6 @@ bool ChonkyLauncher::isNewerRelease(const QJsonObject& latestRelease, const QStr
 		return isNewerVersion(latestVersion, lastInstalledVersion);
 	}
 
-	// Fallback to comparing with current version
 	return isNewerVersion(latestVersion, currentVersion);
 }
 
@@ -976,14 +1078,24 @@ void ChonkyLauncher::loadThemes()
 		m_themeComboBox->addItem(themeName, fileName);
 	}
 
-	QString savedTheme = m_settings->value("selectedTheme", "").toString();
-	if (!savedTheme.isEmpty()) {
-		int index = m_themeComboBox->findData(savedTheme);
-		if (index >= 0) {
-			m_themeComboBox->setCurrentIndex(index);
-			QString themeFile = m_themeComboBox->currentData().toString();
-			if (!themeFile.isEmpty()) {
-				applyTheme(themeFile.left(themeFile.length() - 4));
+	QFile configFile(m_configFilePath);
+	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		QByteArray data = configFile.readAll();
+		configFile.close();
+
+		QJsonDocument doc = QJsonDocument::fromJson(data);
+		if (doc.isObject()) {
+			QJsonObject config = doc.object();
+			QString savedTheme = config["selectedTheme"].toString();
+			if (!savedTheme.isEmpty()) {
+				int index = m_themeComboBox->findData(savedTheme);
+				if (index >= 0) {
+					m_themeComboBox->setCurrentIndex(index);
+					QString themeFile = m_themeComboBox->currentData().toString();
+					if (!themeFile.isEmpty()) {
+						applyTheme(themeFile.left(themeFile.length() - 4));
+					}
+				}
 			}
 		}
 	}
@@ -1025,5 +1137,24 @@ void ChonkyLauncher::onThemeChanged(const QString& themeName)
 		applyTheme(themeFile.left(themeFile.length() - 4));
 	}
 
-	m_settings->setValue("selectedTheme", themeFile);
+	QFile configFile(m_configFilePath);
+	QJsonObject config;
+
+	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		QByteArray data = configFile.readAll();
+		configFile.close();
+
+		QJsonDocument doc = QJsonDocument::fromJson(data);
+		if (doc.isObject()) {
+			config = doc.object();
+		}
+	}
+
+	config["selectedTheme"] = themeFile;
+
+	if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		QJsonDocument doc(config);
+		configFile.write(doc.toJson());
+		configFile.close();
+	}
 }

@@ -30,6 +30,7 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QList>
+#include <QtCore/QFile>
 
 class ChonkyLauncher : public QMainWindow
 {
@@ -131,7 +132,7 @@ private:
 
 	QString m_chonkyExecutablePath;
 	QStringList m_gamesFolderPaths;
-	QSettings* m_settings;
+	QString m_configFilePath;
 	QProcess* m_gameProcess;
 };
 
