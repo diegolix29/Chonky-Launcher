@@ -31,6 +31,7 @@
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QList>
 #include <QtCore/QFile>
+#include <SDL3/SDL.h>
 
 class ChonkyLauncher : public QMainWindow
 {
@@ -52,6 +53,7 @@ private slots:
 	void onReleasesFetched();
 	void onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal);
 	void onDownloadFinished();
+	void handleGamepadEvents();
 
 private:
 	void setupUI();
@@ -74,6 +76,13 @@ private:
 	void loadThemes();
 	void applyTheme(const QString& themeName);
 	void onThemeChanged(const QString& themeName);
+	void initializeGamepad();
+	void cleanupGamepad();
+	void handleJoystickInput();
+	void navigateGamesUp();
+	void navigateGamesDown();
+	void navigateGamesLeft();
+	void navigateGamesRight();
 
 	QWidget* m_centralWidget;
 	QVBoxLayout* m_mainLayout;
@@ -134,6 +143,14 @@ private:
 	QStringList m_gamesFolderPaths;
 	QString m_configFilePath;
 	QProcess* m_gameProcess;
+
+	// Gamepad support
+	SDL_Gamepad* m_gamepad;
+	QTimer* m_gamepadTimer;
+	bool m_gamepadInitialized;
+	bool m_gamepadFailed; // Track if gamepad mapping failed
+	bool m_usingJoystickFallback; // Track if we're using joystick mode
+	bool m_gamepadControlGUI; // Track if gamepad should control GUI instead of game
 };
 
 #endif

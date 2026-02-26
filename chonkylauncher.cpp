@@ -7,6 +7,9 @@
 #include <QtCore/QFile>
 #include <QtWidgets/QComboBox>
 
+#define SDL_ENABLE_GAMEPAD
+#include <SDL3/SDL.h>
+
 ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	: QMainWindow(parent)
 	, m_centralWidget(nullptr)
@@ -49,17 +52,23 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 	, m_progressBar(nullptr)
 	, m_statusLabel(nullptr)
 	, m_gameProcess(nullptr)
+	, m_gamepad(nullptr)
+	, m_gamepadTimer(nullptr)
+	, m_gamepadInitialized(false)
+	, m_gamepadFailed(false)
+	, m_usingJoystickFallback(false)
+	, m_gamepadControlGUI(false)
 {
 	QString appDir = QCoreApplication::applicationDirPath();
 	m_configFilePath = appDir + "/config.json";
-	
+
 	QFile configFile(m_configFilePath);
 	if (!configFile.exists()) {
 		QSettings oldSettings("ChonkyLauncher", "Settings");
 		oldSettings.clear();
 		oldSettings.sync();
 	}
-	
+
 	m_networkManager = new QNetworkAccessManager(this);
 
 	setupUI();
@@ -84,6 +93,7 @@ ChonkyLauncher::ChonkyLauncher(QWidget* parent)
 
 ChonkyLauncher::~ChonkyLauncher()
 {
+	cleanupGamepad();
 }
 
 void ChonkyLauncher::setupUI()
@@ -229,7 +239,7 @@ void ChonkyLauncher::setupUI()
 			isInitialized = true;
 			return;
 		}
-		
+
 		m_chonkyExecutablePath = m_chonkyPathEdit->text();
 		saveSettings();
 		updateScanButtonState();
@@ -243,6 +253,8 @@ void ChonkyLauncher::setupUI()
 	loadThemes();
 
 	updateScanButtonState();
+
+	initializeGamepad();
 }
 
 void ChonkyLauncher::updateScanButtonState()
@@ -582,37 +594,37 @@ void ChonkyLauncher::loadSettings()
 	static bool isLoading = false;
 	if (isLoading) return;
 	isLoading = true;
-	
+
 	QFile configFile(m_configFilePath);
-	
+
 	if (configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
 		QByteArray data = configFile.readAll();
 		configFile.close();
-		
+
 		QJsonDocument doc = QJsonDocument::fromJson(data);
 		if (doc.isObject()) {
 			QJsonObject config = doc.object();
-			
+
 			m_chonkyExecutablePath = config["chonkyExecutable"].toString();
 			m_chonkyPathEdit->setText(m_chonkyExecutablePath);
-			
+
 			QJsonArray pathsArray = config["gamesFolderPaths"].toArray();
 			m_gamesFolderPaths.clear();
 			for (const QJsonValue& value : pathsArray) {
 				m_gamesFolderPaths.append(value.toString());
 			}
-			
+
 			qDebug() << "Loaded" << m_gamesFolderPaths.size() << "paths:" << m_gamesFolderPaths;
-			
+
 			m_autoUpdateCheckBox->setChecked(config["autoUpdate"].toBool(false));
 			m_autoInstallCheckBox->setChecked(config["autoInstall"].toBool(false));
 			m_lastInstalledReleaseId = config["lastInstalledReleaseId"].toString();
-			
+
 			int iconSize = config["iconSize"].toInt(30);
 			m_iconSizeSlider->setValue(iconSize);
 			m_iconSizeValue->setText(QString::number(iconSize) + "px");
 			m_gamesList->setIconSize(QSize(iconSize, iconSize));
-			
+
 			m_checkUpdateButton->setEnabled(m_autoUpdateCheckBox->isChecked());
 		}
 	}
@@ -621,7 +633,7 @@ void ChonkyLauncher::loadSettings()
 		m_chonkyExecutablePath = "";
 		m_gamesFolderPaths.clear();
 		m_lastInstalledReleaseId = "";
-		
+
 		m_chonkyPathEdit->setText("");
 		m_autoUpdateCheckBox->setChecked(false);
 		m_autoInstallCheckBox->setChecked(false);
@@ -629,11 +641,11 @@ void ChonkyLauncher::loadSettings()
 		m_iconSizeValue->setText("30px");
 		m_gamesList->setIconSize(QSize(30, 30));
 		m_checkUpdateButton->setEnabled(false);
-		
+
 		updatePathButtons();
 		updateScanButtonState();
 	}
-	
+
 	if (!m_pathRows.isEmpty()) {
 		qDebug() << "Clearing" << m_pathRows.size() << "existing UI elements";
 		m_pathSelectionComboBox->clear();
@@ -641,7 +653,7 @@ void ChonkyLauncher::loadSettings()
 			QHBoxLayout* row = m_pathRows[i];
 			QLineEdit* edit = m_pathEdits[i];
 			QPushButton* button = m_pathBrowseButtons[i];
-			
+
 			m_pathsContainerLayout->removeItem(row);
 			delete edit;
 			delete button;
@@ -651,7 +663,7 @@ void ChonkyLauncher::loadSettings()
 		m_pathEdits.clear();
 		m_pathBrowseButtons.clear();
 	}
-	
+
 	qDebug() << "Creating UI for" << m_gamesFolderPaths.size() << "paths";
 	for (int i = 0; i < m_gamesFolderPaths.size(); ++i) {
 		QString displayName = QString("Path %1: %2").arg(i + 1).arg(QDir(m_gamesFolderPaths[i]).dirName());
@@ -684,7 +696,7 @@ void ChonkyLauncher::loadSettings()
 
 				QString newDisplayName = QString("Path %1: %2").arg(i + 1).arg(QDir(newPath).dirName());
 				m_pathSelectionComboBox->setItemText(i, newDisplayName);
-				
+
 				saveSettings();
 			}
 			});
@@ -692,11 +704,11 @@ void ChonkyLauncher::loadSettings()
 
 	updatePathButtons();
 	updateScanButtonState();
-	
+
 	if (!m_gamesFolderPaths.isEmpty() && !m_chonkyExecutablePath.isEmpty()) {
 		scanAllPaths();
 	}
-	
+
 	qDebug() << "loadSettings() finished with" << m_gamesFolderPaths.size() << "paths";
 	isLoading = false;
 }
@@ -704,7 +716,7 @@ void ChonkyLauncher::loadSettings()
 void ChonkyLauncher::saveSettings()
 {
 	qDebug() << "saveSettings() called with" << m_gamesFolderPaths.size() << "paths:" << m_gamesFolderPaths;
-	
+
 	QJsonObject config;
 	config["chonkyExecutable"] = m_chonkyExecutablePath;
 
@@ -727,7 +739,8 @@ void ChonkyLauncher::saveSettings()
 		configFile.write(doc.toJson());
 		configFile.close();
 		qDebug() << "Settings saved successfully to" << m_configFilePath;
-	} else {
+	}
+	else {
 		qDebug() << "Failed to save settings to" << m_configFilePath;
 	}
 }
@@ -1181,4 +1194,447 @@ void ChonkyLauncher::onThemeChanged(const QString& themeName)
 		configFile.write(doc.toJson());
 		configFile.close();
 	}
+}
+
+void ChonkyLauncher::initializeGamepad()
+{
+	qDebug() << "Initializing SDL gamepad subsystem...";
+
+	if (SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK) < 0) {
+		qDebug() << "SDL initialization failed:" << SDL_GetError();
+		return;
+	}
+
+	qDebug() << "SDL initialized successfully";
+
+	SDL_JoystickID* gamepads = SDL_GetGamepads(NULL);
+	int initialCount = 0;
+	if (gamepads) {
+		for (int i = 0; gamepads[i] != 0; ++i) {
+			initialCount++;
+		}
+		SDL_free(gamepads);
+	}
+	qDebug() << "Initial gamepad count:" << initialCount;
+
+	SDL_JoystickID* joysticks = SDL_GetJoysticks(NULL);
+	int joystickCount = 0;
+	if (joysticks) {
+		for (int i = 0; joysticks[i] != 0; ++i) {
+			joystickCount++;
+		}
+		SDL_free(joysticks);
+	}
+	qDebug() << "Initial joystick count:" << joystickCount;
+
+	m_gamepadTimer = new QTimer(this);
+	connect(m_gamepadTimer, &QTimer::timeout, this, &ChonkyLauncher::handleGamepadEvents);
+	m_gamepadTimer->start(50);
+
+	m_gamepadInitialized = true;
+	qDebug() << "Gamepad subsystem initialized";
+}
+
+void ChonkyLauncher::cleanupGamepad()
+{
+	if (m_gamepadTimer) {
+		m_gamepadTimer->stop();
+		delete m_gamepadTimer;
+		m_gamepadTimer = nullptr;
+	}
+
+	if (m_gamepad) {
+		SDL_CloseGamepad(m_gamepad);
+		m_gamepad = nullptr;
+	}
+
+	if (m_gamepadInitialized) {
+		SDL_QuitSubSystem(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
+		m_gamepadInitialized = false;
+		qDebug() << "Gamepad subsystem cleaned up";
+	}
+}
+
+void ChonkyLauncher::handleGamepadEvents()
+{
+	if (!m_gamepadInitialized) return;
+
+	try {
+		SDL_UpdateGamepads();
+
+		SDL_JoystickID* gamepads = SDL_GetGamepads(NULL);
+		int numGamepads = 0;
+		if (gamepads) {
+			for (int i = 0; gamepads[i] != 0; ++i) {
+				numGamepads++;
+			}
+			SDL_free(gamepads);
+		}
+
+		if (m_usingJoystickFallback) {
+			if (numGamepads == 0) {
+				m_usingJoystickFallback = false;
+				m_gamepadFailed = false;
+				qDebug() << "Gamepad disconnected, resetting fallback state";
+			}
+			else {
+				handleJoystickInput();
+				return;
+			}
+		}
+
+		if (!m_gamepad && !m_gamepadFailed && numGamepads > 0) {
+			qDebug() << "Found" << numGamepads << "gamepad(s), attempting to open first one...";
+
+			m_gamepad = SDL_OpenGamepad(0);
+			if (m_gamepad) {
+				qDebug() << "Gamepad connected:" << SDL_GetGamepadName(m_gamepad);
+				m_gamepadFailed = false;
+			}
+			else {
+				qDebug() << "Failed to open gamepad:" << SDL_GetError();
+				qDebug() << "Switching to joystick fallback mode";
+				m_gamepadFailed = true;
+				m_usingJoystickFallback = true;
+				return;
+			}
+		}
+
+		if (m_gamepad && numGamepads == 0) {
+			qDebug() << "Gamepad disconnected";
+			SDL_CloseGamepad(m_gamepad);
+			m_gamepad = nullptr;
+			m_gamepadFailed = false;
+			m_usingJoystickFallback = false;
+			m_gamepadControlGUI = false;
+			return;
+		}
+
+		if (!m_gamepad && !m_usingJoystickFallback) {
+			return;
+		}
+
+		if (m_usingJoystickFallback) {
+			handleJoystickInput();
+			return;
+		}
+
+		bool gameRunning = (m_gameProcess && m_gameProcess->state() == QProcess::Running);
+
+		static bool lastGuideState = false;
+		static int guideHoldStartTime = 0;
+		bool currentGuideState = SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_GUIDE);
+
+		if (currentGuideState && !lastGuideState) {
+			guideHoldStartTime = SDL_GetTicks();
+			qDebug() << "Guide button pressed - starting hold timer";
+		}
+		else if (!currentGuideState && lastGuideState) {
+			int holdDuration = SDL_GetTicks() - guideHoldStartTime;
+			if (gameRunning && holdDuration >= 1000) {
+				m_gamepadControlGUI = !m_gamepadControlGUI;
+				qDebug() << "Guide button held for" << holdDuration << "ms - GUI control:" << (m_gamepadControlGUI ? "ENABLED" : "DISABLED");
+			}
+			qDebug() << "Guide button released after" << holdDuration << "ms";
+		}
+		else if (currentGuideState && gameRunning) {
+			int holdDuration = SDL_GetTicks() - guideHoldStartTime;
+			if (holdDuration >= 500) {
+				qDebug() << "Guide button held - release to toggle GUI control (" << (1000 - holdDuration) << "ms remaining)";
+			}
+		}
+
+		lastGuideState = currentGuideState;
+
+		if (!gameRunning || m_gamepadControlGUI) {
+			static int lastNavigationTime = 0;
+			int currentTime = SDL_GetTicks();
+			const int navigationDelay = 200;
+
+			if (currentTime - lastNavigationTime > navigationDelay) {
+				if (SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP)) {
+					navigateGamesUp();
+					lastNavigationTime = currentTime;
+				}
+				else if (SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) {
+					navigateGamesDown();
+					lastNavigationTime = currentTime;
+				}
+				else if (SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) {
+					navigateGamesLeft();
+					lastNavigationTime = currentTime;
+				}
+				else if (SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) {
+					navigateGamesRight();
+					lastNavigationTime = currentTime;
+				}
+			}
+
+			static bool lastAState = false;
+			static bool lastBState = false;
+			static bool lastStartState = false;
+
+			bool currentAState = SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
+			bool currentBState = SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_EAST);
+			bool currentStartState = SDL_GetGamepadButton(m_gamepad, SDL_GAMEPAD_BUTTON_START);
+
+			if (currentAState && !lastAState) {
+				if (m_gamesList->currentItem() && m_playButton->isEnabled()) {
+					launchSelectedGame();
+				}
+			}
+
+			if (currentBState && !lastBState) {
+				if (!gameRunning || m_gamepadControlGUI) {
+					if (m_stopButton->isEnabled()) {
+						stopGame();
+					}
+				}
+			}
+
+			if (currentStartState && !lastStartState) {
+				if (m_gamesList->currentItem() && m_playButton->isEnabled()) {
+					launchSelectedGame();
+				}
+			}
+
+			lastAState = currentAState;
+			lastBState = currentBState;
+			lastStartState = currentStartState;
+		}
+	}
+	catch (const std::exception& e) {
+		qDebug() << "Exception in gamepad event handler:" << e.what();
+	}
+	catch (...) {
+		qDebug() << "Unknown exception in gamepad event handler";
+	}
+}
+
+void ChonkyLauncher::handleJoystickInput()
+{
+	static SDL_Joystick* joystick = nullptr;
+	static bool joystickInitialized = false;
+
+	if (!joystickInitialized) {
+		SDL_JoystickID* joysticks = SDL_GetJoysticks(NULL);
+		int joystickCount = 0;
+		if (joysticks) {
+			for (int i = 0; joysticks[i] != 0; ++i) {
+				joystickCount++;
+			}
+			SDL_free(joysticks);
+		}
+
+		qDebug() << "Found" << joystickCount << "joystick(s) for fallback";
+
+		if (joystickCount > 0) {
+			joystick = SDL_OpenJoystick(0);
+			if (joystick) {
+				qDebug() << "Using joystick fallback:" << SDL_GetJoystickName(joystick);
+				qDebug() << "Joystick has" << SDL_GetNumJoystickAxes(joystick) << "axes,"
+					<< SDL_GetNumJoystickButtons(joystick) << "buttons,"
+					<< SDL_GetNumJoystickHats(joystick) << "hats";
+				joystickInitialized = true;
+			}
+			else {
+				qDebug() << "Failed to open joystick 0:" << SDL_GetError();
+
+				SDL_JoystickID* joystickIDs = SDL_GetJoysticks(NULL);
+				if (joystickIDs && joystickIDs[0] != 0) {
+					qDebug() << "Trying to open joystick by instance ID:" << joystickIDs[0];
+					joystick = SDL_OpenJoystick(joystickIDs[0]);
+					if (joystick) {
+						qDebug() << "Successfully opened joystick by instance ID:" << SDL_GetJoystickName(joystick);
+						qDebug() << "Joystick has" << SDL_GetNumJoystickAxes(joystick) << "axes,"
+							<< SDL_GetNumJoystickButtons(joystick) << "buttons,"
+							<< SDL_GetNumJoystickHats(joystick) << "hats";
+						joystickInitialized = true;
+					}
+					else {
+						qDebug() << "Failed to open joystick by instance ID:" << SDL_GetError();
+					}
+				}
+				SDL_free(joystickIDs);
+
+				if (!joystickInitialized) {
+					return;
+				}
+			}
+		}
+		else {
+			qDebug() << "No joysticks available for fallback";
+			return;
+		}
+	}
+
+	if (!joystick) return;
+
+	SDL_UpdateJoysticks();
+
+	bool gameRunning = (m_gameProcess && m_gameProcess->state() == QProcess::Running);
+
+	static bool lastGuideState = false;
+	static int guideHoldStartTime = 0;
+	bool currentGuideState = false;
+
+	if (SDL_GetNumJoystickButtons(joystick) > 8) {
+		currentGuideState = SDL_GetJoystickButton(joystick, 8);
+	}
+	else if (SDL_GetNumJoystickButtons(joystick) > 10) {
+		currentGuideState = SDL_GetJoystickButton(joystick, 10);
+	}
+
+	if (currentGuideState && !lastGuideState) {
+		guideHoldStartTime = SDL_GetTicks();
+		qDebug() << "Joystick Guide button pressed - starting hold timer";
+	}
+	else if (!currentGuideState && lastGuideState) {
+		int holdDuration = SDL_GetTicks() - guideHoldStartTime;
+		if (gameRunning && holdDuration >= 1000) {
+			m_gamepadControlGUI = !m_gamepadControlGUI;
+			qDebug() << "Joystick Guide button held for" << holdDuration << "ms - GUI control:" << (m_gamepadControlGUI ? "ENABLED" : "DISABLED");
+		}
+		qDebug() << "Joystick Guide button released after" << holdDuration << "ms";
+	}
+	else if (currentGuideState && gameRunning) {
+		int holdDuration = SDL_GetTicks() - guideHoldStartTime;
+		if (holdDuration >= 500) {
+			qDebug() << "Joystick Guide button held - release to toggle GUI control (" << (1000 - holdDuration) << "ms remaining)";
+		}
+	}
+
+	lastGuideState = currentGuideState;
+
+	if (!gameRunning || m_gamepadControlGUI) {
+		static int lastNavigationTime = 0;
+		int currentTime = SDL_GetTicks();
+		const int navigationDelay = 200;
+
+		if (currentTime - lastNavigationTime > navigationDelay) {
+			if (SDL_GetNumJoystickHats(joystick) > 0) {
+				Uint8 hat = SDL_GetJoystickHat(joystick, 0);
+				if (hat & SDL_HAT_UP) {
+					qDebug() << "Joystick D-pad UP detected";
+					navigateGamesUp();
+					lastNavigationTime = currentTime;
+				}
+				else if (hat & SDL_HAT_DOWN) {
+					qDebug() << "Joystick D-pad DOWN detected";
+					navigateGamesDown();
+					lastNavigationTime = currentTime;
+				}
+				else if (hat & SDL_HAT_LEFT) {
+					qDebug() << "Joystick D-pad LEFT detected";
+					navigateGamesLeft();
+					lastNavigationTime = currentTime;
+				}
+				else if (hat & SDL_HAT_RIGHT) {
+					qDebug() << "Joystick D-pad RIGHT detected";
+					navigateGamesRight();
+					lastNavigationTime = currentTime;
+				}
+			}
+
+			if (SDL_GetNumJoystickAxes(joystick) >= 2) {
+				Sint16 axisX = SDL_GetJoystickAxis(joystick, 0);
+				Sint16 axisY = SDL_GetJoystickAxis(joystick, 1);
+
+				const int deadZone = 16384;
+				if (axisY < -deadZone) {
+					qDebug() << "Joystick axis UP detected:" << axisY;
+					navigateGamesUp();
+					lastNavigationTime = currentTime;
+				}
+				else if (axisY > deadZone) {
+					qDebug() << "Joystick axis DOWN detected:" << axisY;
+					navigateGamesDown();
+					lastNavigationTime = currentTime;
+				}
+				else if (axisX < -deadZone) {
+					qDebug() << "Joystick axis LEFT detected:" << axisX;
+					navigateGamesLeft();
+					lastNavigationTime = currentTime;
+				}
+				else if (axisX > deadZone) {
+					qDebug() << "Joystick axis RIGHT detected:" << axisX;
+					navigateGamesRight();
+					lastNavigationTime = currentTime;
+				}
+			}
+		}
+
+		static bool lastButton0State = false;
+		static bool lastButton1State = false;
+		static bool lastButton7State = false;
+
+		if (SDL_GetNumJoystickButtons(joystick) > 0) {
+			bool currentButton0State = SDL_GetJoystickButton(joystick, 0);
+			bool currentButton1State = SDL_GetJoystickButton(joystick, 1);
+			bool currentButton7State = SDL_GetJoystickButton(joystick, 7);
+
+			if (currentButton0State && !lastButton0State) {
+				qDebug() << "Joystick button 0 (A) pressed";
+				if (m_gamesList->currentItem() && m_playButton->isEnabled()) {
+					launchSelectedGame();
+				}
+			}
+
+			if (currentButton1State && !lastButton1State) {
+				qDebug() << "Joystick button 1 (B) pressed";
+				if (!gameRunning || m_gamepadControlGUI) {
+					if (m_stopButton->isEnabled()) {
+						stopGame();
+					}
+				}
+			}
+
+			if (currentButton7State && !lastButton7State) {
+				qDebug() << "Joystick button 7 (Start) pressed";
+				if (m_gamesList->currentItem() && m_playButton->isEnabled()) {
+					launchSelectedGame();
+				}
+			}
+
+			lastButton0State = currentButton0State;
+			lastButton1State = currentButton1State;
+			lastButton7State = currentButton7State;
+		}
+	}
+}
+
+void ChonkyLauncher::navigateGamesUp()
+{
+	if (!m_gamesList || m_gamesList->count() == 0) return;
+
+	int currentRow = m_gamesList->currentRow();
+	if (currentRow > 0) {
+		m_gamesList->setCurrentRow(currentRow - 1);
+	}
+	else {
+		m_gamesList->setCurrentRow(m_gamesList->count() - 1);
+	}
+}
+
+void ChonkyLauncher::navigateGamesDown()
+{
+	if (!m_gamesList || m_gamesList->count() == 0) return;
+
+	int currentRow = m_gamesList->currentRow();
+	if (currentRow < m_gamesList->count() - 1) {
+		m_gamesList->setCurrentRow(currentRow + 1);
+	}
+	else {
+		m_gamesList->setCurrentRow(0);
+	}
+}
+
+void ChonkyLauncher::navigateGamesLeft()
+{
+	navigateGamesUp();
+}
+
+void ChonkyLauncher::navigateGamesRight()
+{
+	navigateGamesDown();
 }
