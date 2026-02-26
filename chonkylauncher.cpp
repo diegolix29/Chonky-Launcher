@@ -389,6 +389,12 @@ void ChonkyLauncher::scanAllPaths()
 	}
 
 	m_statusLabel->setText(QString("Found %1 games").arg(m_gamesList->count()));
+
+	// Auto-select first item if games were found and gamepad is initialized
+	if (m_gamesList->count() > 0 && m_gamepadInitialized && !m_gamesList->currentItem()) {
+		m_gamesList->setCurrentRow(0);
+		qDebug() << "Auto-selected first game item after scanning";
+	}
 }
 
 void ChonkyLauncher::onIconSizeChanged(int size)
@@ -1233,6 +1239,11 @@ void ChonkyLauncher::initializeGamepad()
 
 	m_gamepadInitialized = true;
 	qDebug() << "Gamepad subsystem initialized";
+
+	if (m_gamesList && m_gamesList->count() > 0 && !m_gamesList->currentItem()) {
+		m_gamesList->setCurrentRow(0);
+		qDebug() << "Auto-selected first game item for gamepad navigation";
+	}
 }
 
 void ChonkyLauncher::cleanupGamepad()
@@ -1607,9 +1618,39 @@ void ChonkyLauncher::navigateGamesUp()
 {
 	if (!m_gamesList || m_gamesList->count() == 0) return;
 
-	int currentRow = m_gamesList->currentRow();
-	if (currentRow > 0) {
-		m_gamesList->setCurrentRow(currentRow - 1);
+	QListWidgetItem* currentItem = m_gamesList->currentItem();
+	if (!currentItem) return;
+
+	QRect currentRect = m_gamesList->visualItemRect(currentItem);
+	if (currentRect.isEmpty()) return;
+
+	QListWidgetItem* bestItem = nullptr;
+	int bestDistance = INT_MAX;
+	QPoint currentCenter = currentRect.center();
+
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		if (item == currentItem) continue;
+
+		QRect itemRect = m_gamesList->visualItemRect(item);
+		if (itemRect.isEmpty()) continue;
+
+		QPoint itemCenter = itemRect.center();
+
+		if (itemRect.top() < currentRect.top()) {
+			int horizontalDistance = qAbs(itemCenter.x() - currentCenter.x());
+			int verticalDistance = currentRect.top() - itemRect.bottom();
+			int totalDistance = horizontalDistance + verticalDistance * 2;
+
+			if (totalDistance < bestDistance) {
+				bestDistance = totalDistance;
+				bestItem = item;
+			}
+		}
+	}
+
+	if (bestItem) {
+		m_gamesList->setCurrentItem(bestItem);
 	}
 	else {
 		m_gamesList->setCurrentRow(m_gamesList->count() - 1);
@@ -1620,9 +1661,39 @@ void ChonkyLauncher::navigateGamesDown()
 {
 	if (!m_gamesList || m_gamesList->count() == 0) return;
 
-	int currentRow = m_gamesList->currentRow();
-	if (currentRow < m_gamesList->count() - 1) {
-		m_gamesList->setCurrentRow(currentRow + 1);
+	QListWidgetItem* currentItem = m_gamesList->currentItem();
+	if (!currentItem) return;
+
+	QRect currentRect = m_gamesList->visualItemRect(currentItem);
+	if (currentRect.isEmpty()) return;
+
+	QListWidgetItem* bestItem = nullptr;
+	int bestDistance = INT_MAX;
+	QPoint currentCenter = currentRect.center();
+
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		if (item == currentItem) continue;
+
+		QRect itemRect = m_gamesList->visualItemRect(item);
+		if (itemRect.isEmpty()) continue;
+
+		QPoint itemCenter = itemRect.center();
+
+		if (itemRect.top() > currentRect.top()) {
+			int horizontalDistance = qAbs(itemCenter.x() - currentCenter.x());
+			int verticalDistance = itemRect.top() - currentRect.bottom();
+			int totalDistance = horizontalDistance + verticalDistance * 2;
+
+			if (totalDistance < bestDistance) {
+				bestDistance = totalDistance;
+				bestItem = item;
+			}
+		}
+	}
+
+	if (bestItem) {
+		m_gamesList->setCurrentItem(bestItem);
 	}
 	else {
 		m_gamesList->setCurrentRow(0);
@@ -1631,10 +1702,89 @@ void ChonkyLauncher::navigateGamesDown()
 
 void ChonkyLauncher::navigateGamesLeft()
 {
-	navigateGamesUp();
+	if (!m_gamesList || m_gamesList->count() == 0) return;
+
+	QListWidgetItem* currentItem = m_gamesList->currentItem();
+	if (!currentItem) return;
+
+	QRect currentRect = m_gamesList->visualItemRect(currentItem);
+	if (currentRect.isEmpty()) return;
+
+	QListWidgetItem* bestItem = nullptr;
+	int bestDistance = INT_MAX;
+	QPoint currentCenter = currentRect.center();
+
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		if (item == currentItem) continue;
+
+		QRect itemRect = m_gamesList->visualItemRect(item);
+		if (itemRect.isEmpty()) continue;
+
+		QPoint itemCenter = itemRect.center();
+
+		if (itemRect.left() < currentRect.left()) {
+			int horizontalDistance = currentRect.left() - itemRect.right();
+			int verticalDistance = qAbs(itemCenter.y() - currentCenter.y());
+			int totalDistance = horizontalDistance * 2 + verticalDistance;
+
+			if (totalDistance < bestDistance) {
+				bestDistance = totalDistance;
+				bestItem = item;
+			}
+		}
+	}
+
+	if (bestItem) {
+		m_gamesList->setCurrentItem(bestItem);
+	}
+	else {
+		int currentRow = m_gamesList->currentRow();
+		int itemCount = m_gamesList->count();
+		m_gamesList->setCurrentRow(qMin(currentRow + 5, itemCount - 1));
+	}
 }
 
 void ChonkyLauncher::navigateGamesRight()
 {
-	navigateGamesDown();
+	if (!m_gamesList || m_gamesList->count() == 0) return;
+
+	QListWidgetItem* currentItem = m_gamesList->currentItem();
+	if (!currentItem) return;
+
+	QRect currentRect = m_gamesList->visualItemRect(currentItem);
+	if (currentRect.isEmpty()) return;
+
+	QListWidgetItem* bestItem = nullptr;
+	int bestDistance = INT_MAX;
+	QPoint currentCenter = currentRect.center();
+
+	for (int i = 0; i < m_gamesList->count(); ++i) {
+		QListWidgetItem* item = m_gamesList->item(i);
+		if (item == currentItem) continue;
+
+		QRect itemRect = m_gamesList->visualItemRect(item);
+		if (itemRect.isEmpty()) continue;
+
+		QPoint itemCenter = itemRect.center();
+
+		if (itemRect.left() > currentRect.left()) {
+			int horizontalDistance = itemRect.left() - currentRect.right();
+			int verticalDistance = qAbs(itemCenter.y() - currentCenter.y());
+			int totalDistance = horizontalDistance * 2 + verticalDistance;
+
+			if (totalDistance < bestDistance) {
+				bestDistance = totalDistance;
+				bestItem = item;
+			}
+		}
+	}
+
+	if (bestItem) {
+		m_gamesList->setCurrentItem(bestItem);
+	}
+	else {
+		int currentRow = m_gamesList->currentRow();
+		m_gamesList->setCurrentRow(qMax(currentRow - 5, 0));
+	}
 }
